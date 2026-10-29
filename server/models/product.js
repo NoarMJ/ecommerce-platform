@@ -24,10 +24,22 @@ const productSchema = new mongoose.Schema(
       trim: true,
     },
 
+    // Primary category: retained for compatibility with existing code.
     category: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Category',
-      required: [true, 'Product category is required'],
+      required: [true, 'Product primary category is required'],
+    },
+
+    // Additional categories assigned to this product.
+    categories: {
+      type: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'Category',
+        },
+      ],
+      default: [],
     },
 
     priceMinor: {

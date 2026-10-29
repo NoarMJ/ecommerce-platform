@@ -1,6 +1,10 @@
 
 const mongoose = require('mongoose');
 
+// Every permission the application supports.
+// An admin can only receive permissions from this list.
+const ADMIN_PERMISSIONS = require('../config/adminPermissions');
+
 const userSchema = new mongoose.Schema(
   {
     firstName: {
@@ -26,12 +30,10 @@ const userSchema = new mongoose.Schema(
     },
 
     password: {
-        type: String,
+      type: String,
       required: [true, 'Password hash is required.'],
       select: false,
-
     },
-
 
     phoneNumber: {
       type: String,
@@ -43,6 +45,23 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: ['customer', 'admin'],
       default: 'customer',
+    },
+
+    // Specific actions permitted for a regular administrator.
+    permissions: {
+      type: [
+        {
+          type: String,
+          enum: ADMIN_PERMISSIONS,
+        },
+      ],
+      default: [],
+    },
+
+    // Only the trusted primary administrator should have this set to true.
+    isPrimaryAdmin: {
+      type: Boolean,
+      default: false,
     },
 
     isActive: {

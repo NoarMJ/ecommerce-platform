@@ -1,12 +1,15 @@
 
 const bcrypt = require('bcrypt');
 const User = require('../models/user');
+const {
+  mergeGuestCartIntoUserCart,
+} = require('../services/cartService');
 
 const register = async (req, res) => {
   try {
     const { firstName, lastName, email, password, phoneNumber } = req.body;
 
-    // 1. Check required fields.
+    // 1. Validate required fields.
     if (
       typeof firstName !== 'string' ||
       typeof lastName !== 'string' ||
@@ -23,10 +26,8 @@ const register = async (req, res) => {
       });
     }
 
-    // 2. Normalize the email address.
+    // 2. Normalize and validate email.
     const normalizedEmail = email.trim().toLowerCase();
-
-    // 3. Apply basic validation.
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     if (!emailPattern.test(normalizedEmail)) {
@@ -36,10 +37,15 @@ const register = async (req, res) => {
       });
     }
 
-    if (password.length < 8 || Buffer.byteLength(password, 'utf8') > 72) {
+    // 3. Validate password and profile fields.
+    if (
+      password.length < 8 ||
+      Buffer.byteLength(password, 'utf8') > 72
+    ) {
       return res.status(400).json({
         status: 'error',
-        message: 'Password must be at least 8 characters and no more than 72 UTF-8 bytes.',
+        message:
+          'Password must be at least 8 characters and no more than 72 UTF-8 bytes.',
       });
     }
 
@@ -52,7 +58,8 @@ const register = async (req, res) => {
 
     if (
       phoneNumber !== undefined &&
-      (typeof phoneNumber !== 'string' || phoneNumber.trim().length > 30)
+      (typeof phoneNumber !== 'string' ||
+        phoneNumber.trim().length > 30)
     ) {
       return res.status(400).json({
         status: 'error',
@@ -60,7 +67,7 @@ const register = async (req, res) => {
       });
     }
 
-    // 4. Check whether the email is already registered.
+    // 4. Prevent duplicate accounts.
     const existingUser = await User.findOne({ email: normalizedEmail });
 
     if (existingUser) {
@@ -70,11 +77,10 @@ const register = async (req, res) => {
       });
     }
 
-    // 5. Hash the password before saving it.
+    // 5. Hash the password.
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // 6. Create the account.
-    // The public request cannot choose its own role.
+    // 6. Public registration always creates a customer.
     const user = await User.create({
       firstName: firstName.trim(),
       lastName: lastName.trim(),
@@ -84,7 +90,7 @@ const register = async (req, res) => {
       role: 'customer',
     });
 
-    // 7. Return safe account details only.
+    // 7. Return safe account details.
     return res.status(201).json({
       status: 'success',
       message: 'Account created successfully.',
@@ -100,8 +106,6 @@ const register = async (req, res) => {
       },
     });
   } catch (error) {
-    // The database unique index also protects against simultaneous
-    // registration requests using the same email.
     if (error.code === 11000) {
       return res.status(409).json({
         status: 'error',
@@ -118,45 +122,36 @@ const register = async (req, res) => {
   }
 };
 
-
-
 const login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
-    // Check that both fields were supplied.
-    if (!email || !password) {
+    if (
+      typeof email !== 'string' ||
+      !email.trim() ||
+      typeof password !== 'string' ||
+      !password
+    ) {
       return res.status(400).json({
         message: 'Email and password are required.',
       });
     }
 
-    // Find the user and retrieve the password hash.
+    // Retrieve the password hash because the model excludes it by default.
     const user = await User.findOne({
       email: email.trim().toLowerCase(),
     }).select('+password');
 
-    if (!user) {
+    if (!user || !user.isActive) {
       return res.status(401).json({
         message: 'Invalid email or password.',
       });
     }
 
-  
-    console.log('Login diagnostic:', {
-    userFound: Boolean(user),
-    passwordReceived: typeof password === 'string',
-     passwordHashRetrieved: typeof user.password === 'string',
-     passwordHashLength:
-     typeof user.password === 'string'
-         ? user.password.length
-         : 0,
-    });
-
-const passwordMatches = await bcrypt.compare(
-  password,
-  user.password
-);
+    const passwordMatches = await bcrypt.compare(
+      password,
+      user.password
+    );
 
     if (!passwordMatches) {
       return res.status(401).json({
@@ -164,23 +159,47 @@ const passwordMatches = await bcrypt.compare(
       });
     }
 
-    // Prevent an existing session from being reused after login.
+    // Regenerate the session after successful authentication.
     req.session.regenerate((err) => {
       if (err) return next(err);
 
       req.session.userId = user._id.toString();
 
-      req.session.save((err) => {
-        if (err) return next(err);
+      req.session.save(async (saveError) => {
+        if (saveError) return next(saveError);
 
-        return res.status(200).json({
-          message: 'Login successful.',
-          user: {
-            id: user._id,
-            name: `${user.firstName} ${user.lastName}`,
-            email: user.email,
-          },
-        });
+        try {
+          const guestToken = req.cookies?.guestCartToken;
+
+          const result = await mergeGuestCartIntoUserCart(
+            user._id,
+            guestToken
+          );
+
+          if (result.merged) {
+            res.clearCookie('guestCartToken', {
+              httpOnly: true,
+              secure: process.env.NODE_ENV === 'production',
+              sameSite: 'lax',
+              path: '/',
+            });
+          }
+
+          return res.status(200).json({
+            message: 'Login successful.',
+            user: {
+              id: user._id,
+              name: `${user.firstName} ${user.lastName}`,
+              email: user.email,
+              role: user.role,
+              permissions: user.permissions || [],
+              isPrimaryAdmin: user.isPrimaryAdmin || false,
+            },
+            cartMerged: result.merged,
+          });
+        } catch (error) {
+          return next(error);
+        }
       });
     });
   } catch (error) {
@@ -188,28 +207,22 @@ const passwordMatches = await bcrypt.compare(
   }
 };
 
-
-
 const getMe = async (req, res, next) => {
   try {
-    // 1. Check whether the session contains a user ID.
-    if (!req.session.userId) {
+    if (!req.session?.userId) {
       return res.status(401).json({
         message: 'You are not logged in.',
       });
     }
 
-    // 2. Find the account associated with the session.
     const user = await User.findById(req.session.userId);
 
-    // 3. Handle accounts that no longer exist or are disabled.
     if (!user || !user.isActive) {
       return res.status(401).json({
         message: 'Your session is no longer valid.',
       });
     }
 
-    // 4. Return safe user details.
     return res.status(200).json({
       message: 'Authenticated user retrieved successfully.',
       user: {
@@ -220,6 +233,8 @@ const getMe = async (req, res, next) => {
         email: user.email,
         phoneNumber: user.phoneNumber,
         role: user.role,
+        permissions: user.permissions || [],
+        isPrimaryAdmin: user.isPrimaryAdmin || false,
       },
     });
   } catch (error) {
@@ -227,21 +242,24 @@ const getMe = async (req, res, next) => {
   }
 };
 
-const logout = (req , res , next) => {
-    req.session.destroy((error) => {
-        if (error) {
-            return next(error);
-        }
+const logout = (req, res, next) => {
+  req.session.destroy((error) => {
+    if (error) return next(error);
 
-        res.clearCookie('connect.sid' , {
-            path: '/',
-        });
+    // Match the cookie name configured by your Express session middleware.
+    res.clearCookie('ecommerce.sid', {
+      path: '/',
+    });
 
-        return res.status(200).json({
-            message : 'Logout Successful',
-        });
-
-     });
+    return res.status(200).json({
+      message: 'Logout successful.',
+    });
+  });
 };
 
-module.exports = { register , login  , getMe , logout};
+module.exports = {
+  register,
+  login,
+  getMe,
+  logout,
+};

@@ -4,17 +4,41 @@ require('dotenv').config();
 const express = require('express');
 const connectDB = require('./config/db');
 const session = require('express-session');
+const cookieParser = require('cookie-parser');
+const cors = require ('cors');
+
+
+
 const MongoStore = require('connect-mongo').default;
 const productRoutes = require('./routes/productRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const authRoutes = require('./routes/authRoutes');
+const cartRoutes = require('./routes/cartRoutes');
+const errorHandler = require('./middleware/errorHandler');
 const { mongo } = require('mongoose');
+const adminRoutes =require('./routes/adminRoutes');
+const orderRoutes = require('./routes/orderRoutes');
+
+
+const paymentRoutes = require('./routes/paymentRoutes');
+
 
 const app = express();
 const PORT = process.env.PORT || 3002;
 
+
+app.use (
+  cors({
+    origin: 'http://localhost:5173',
+    credentials: true,
+  })
+);
+
 // Middleware: allows Express to read JSON request bodies.
 app.use(express.json());
+
+// middleware for cookie parser
+app.use(cookieParser());
 
 // Middleware
 app.use(
@@ -50,6 +74,15 @@ app.use('/api/categories' , categoryRoutes)
 app.use('/api/products' , productRoutes);
 app.use('/api/auth' , authRoutes);
 
+app.use('/api/cart', cartRoutes);
+
+app.use('/api/admins', adminRoutes);
+app.use('/api/orders' , orderRoutes);
+
+
+app.use('/api/payments', paymentRoutes);
+
+app.use(errorHandler);
 
 // Connect to MongoDB before starting the API server.
 const startServer = async () => {

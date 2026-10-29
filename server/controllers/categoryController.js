@@ -3,11 +3,29 @@ const Category = require('../models/category');
 const Product = require('../models/product');
 
 // GET /api/categories
+// Public: return active categories only.
 const getCategories = async (req, res, next) => {
   try {
     const categories = await Category.find({
       isActive: true,
     }).sort({ name: 1 });
+
+    return res.status(200).json({
+      status: 'success',
+      results: categories.length,
+      data: categories,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// GET /api/categories/admin
+// Admin: return active and inactive categories.
+const getAdminCategories = async (req, res, next) => {
+  try {
+    const categories = await Category.find({})
+      .sort({ name: 1 });
 
     return res.status(200).json({
       status: 'success',
@@ -191,9 +209,44 @@ const deleteCategory = async (req, res, next) => {
   }
 };
 
+// PATCH /api/categories/:id/activate
+const activateCategory = async (req, res, next) => {
+  try {
+    const category = await Category.findByIdAndUpdate(
+      req.params.id,
+      { $set: { isActive: true } },
+      { returnDocument: 'after', runValidators: true }
+    );
+
+    if (!category) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Category not found.',
+      });
+    }
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Category activated successfully.',
+      data: category,
+    });
+  } catch (error) {
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Invalid category ID.',
+      });
+    }
+
+    next(error);
+  }
+};
+
 module.exports = {
   getCategories,
+  getAdminCategories,
   createCategory,
   updateCategory,
   deleteCategory,
+  activateCategory,
 };
