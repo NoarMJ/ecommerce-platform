@@ -1,0 +1,41 @@
+client/src/AppThemeProvider.jsx:15: trailing whitespace.
+[32m+[m[32m    localStorage.setItem('2valid-theme-mode' , mode)[m[41m [m
+client/src/AppThemeProvider.jsx:27: new blank line at EOF.
+client/src/app/store.js:13: trailing whitespace.
+[32m+[m[32m  middleware: (getDefaultMiddleware) =>[m[41m [m
+client/src/components/Navbar.jsx:386: trailing whitespace.
+[32m+[m[41m          [m
+client/src/components/ProductCard.jsx:72: trailing whitespace.
+[32m+[m[32m  // CRITICAL: Clean up the timer if the component unmounts[m[41m [m
+client/src/pages/ProductDetailsPage.jsx:420: trailing whitespace.
+[32m+[m[41m              [m
+client/src/pages/ProductsPage.jsx:25: trailing whitespace.
+[32m+[m[32mimport ProductCard from '../components/ProductCard.jsx'[m[41m   [m
+client/src/pages/ProductsPage.jsx:47: trailing whitespace.
+[32m+[m[32m    category: selectedCategories.length[m[41m [m
+client/src/pages/ProductsPage.jsx:180: trailing whitespace.
+[32m+[m[41m      [m
+client/src/pages/admin/AdminDashboard.jsx:241: trailing whitespace.
+[32m+[m[32m                2 Valid[m[41m [m
+client/src/services/api.js:1: trailing whitespace.
+[32m+[m[32m// one shared service that talks to the backend[m[41m [m
+client/src/services/api.js:99: trailing whitespace.
+[32m+[m[41m    [m
+client/src/services/api.js:164: trailing whitespace.
+[32m+[m[41m    [m
+server/controllers/cartController.js:265: trailing whitespace.
+[32m+[m[41m    [m
+server/controllers/cartController.js:310: trailing whitespace.
+[32m+[m[32m        else{[m[41m [m
+server/controllers/cartController.js:334: trailing whitespace.
+[32m+[m[32m        }[m[41m [m
+server/controllers/orderController.js:113: new blank line at EOF.
+server/controllers/productController.js:656: trailing whitespace.
+[32m+[m[41m  [m
+server/models/cart.js:68: new blank line at EOF.
+server/services/cartService.js:180: trailing whitespace.
+[32m+[m[41m    [m
+server/services/cartService.js:196: trailing whitespace.
+[32m+[m[32m// removing one singular item on the cart[m[41m [m
+server/services/cartService.js:233: trailing whitespace.
+[32m+[m[32m// removing all the items from the cart[m[41m [m
