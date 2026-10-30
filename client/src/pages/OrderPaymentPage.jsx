@@ -20,6 +20,8 @@ import { formatPrice } from '../utils/formatPrice'
 
 const PHONE_PATTERN = /^(?:\+?254|0)[17]\d{8}$/
 const STOP_WAITING_AFTER_MS = 2 * 60 * 1000
+const POLL_EVERY_MS = 3000
+const FINAL_PAYMENT_STATUSES = ['succeeded', 'failed', 'cancelled', 'needs_review']
 
 export default function OrderPaymentPage() {
   const { orderId } = useParams()
@@ -29,19 +31,21 @@ export default function OrderPaymentPage() {
   const [phone, setPhone] = useState(state?.phone ?? '')
   const [phoneError, setPhoneError] = useState('')
   const [retryError, setRetryError] = useState(state?.promptError ?? '')
-
-
-   const [now, setNow] = useState(() => Date.now())
-  const [pollMs, setPollMs] = useState(3000)
+  const [now, setNow] = useState(() => Date.now())
+  const [pollingInterval, setPollingInterval] = useState(POLL_EVERY_MS)
 
   const { data: order } = useGetOrderByIdQuery(orderId)
-  const { data: status, isLoading, isError, refetch } = useGetPaymentStatusQuery(orderId, {
-    pollingInterval: pollMs, // 0 = stop polling
-    skipPollingIfUnfocused: true, // pause while the tab is in the background
+  const {
+    data: status,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+  } = useGetPaymentStatusQuery(orderId, {
+    pollingInterval,
+    skipPollingIfUnfocused: true,
   })
   const [payOrderWithMpesa, { isLoading: isSending }] = usePayOrderWithMpesaMutation()
-
-
 
   // Lets us notice when we have waited too long.
   useEffect(() => {
@@ -50,37 +54,24 @@ export default function OrderPaymentPage() {
   }, [])
 
   const paid = status?.paymentStatus === 'paid'
+  const latest = status?.latestPayment
+  const startedAt = latest ? new Date(latest.startedAt).getTime() : 0
+  const waitedTooLong = latest?.status === 'initiated' && now - startedAt > STOP_WAITING_AFTER_MS
+  const isWaiting = latest?.status === 'initiated' && !waitedTooLong && !retryError
+  const canRetry = !isWaiting && !paid
+
+  // Nothing more will change on its own: stop asking the server.
+  const isFinal = paid || FINAL_PAYMENT_STATUSES.includes(latest?.status)
+  const shouldPoll = !isFinal && !waitedTooLong
+
+  useEffect(() => {
+    setPollingInterval(shouldPoll ? POLL_EVERY_MS : 0)
+  }, [shouldPoll])
 
   // Payment confirmed: go to the confirmation page.
   useEffect(() => {
     if (paid) navigate(`/orders/${orderId}/confirmation`, { replace: true })
   }, [paid, navigate, orderId])
-
-
-
-   const latest = status?.latestPayment
-  const startedAt = latest ? new Date(latest.startedAt).getTime() : 0
-  const waitedTooLong = latest?.status === 'initiated' && now - startedAt > STOP_WAITING_AFTER_MS
-
-  // A live prompt means we are waiting, whatever happened at checkout (e.g. a 409).
-  const isWaiting = latest?.status === 'initiated' && !waitedTooLong
-  const canRetry = !isWaiting && !paid
-
-  // Poll only while a payment is genuinely pending; slow down after 30 seconds.
-  const keepPolling = !paid && isWaiting
-  const slowPoll = !!latest && now - startedAt > 30_000
-  useEffect(() => {
-    setPollMs(!keepPolling ? 0 : slowPoll ? 6000 : 3000)
-  }, [keepPolling, slowPoll])
-
-  // Don't show a stale error while a prompt is live.
-  useEffect(() => {
-    if (isWaiting) setRetryError('')
-  }, [isWaiting])
-
-
-
-
 
   const handleRetry = async () => {
     setRetryError('')
@@ -97,14 +88,14 @@ export default function OrderPaymentPage() {
     }
 
     try {
+      // Invalidates the 'Order' tag, so the status is re-fetched once.
+      // The new payment comes back as "initiated" and polling resumes by itself.
       await payOrderWithMpesa({ orderId, phone }).unwrap()
       setNow(Date.now())
-      refetch()
     } catch (error) {
       setRetryError(
         error?.data?.message ?? 'We could not send the M-Pesa prompt. Please try again.'
       )
-      refetch()
     }
   }
 
@@ -174,6 +165,13 @@ export default function OrderPaymentPage() {
           )}
 
           {retryError && <Alert severity="error" sx={{ width: '100%' }}>{retryError}</Alert>}
+
+          {/* We stopped polling after the time limit, but the payment may still arrive. */}
+          {waitedTooLong && (
+            <Button variant="outlined" onClick={refetch} disabled={isFetching}>
+              {isFetching ? 'Checking…' : 'I have paid – check again'}
+            </Button>
+          )}
 
           {canRetry && latest?.status !== 'needs_review' && (
             <Stack spacing={2} sx={{ width: '100%' }}>
