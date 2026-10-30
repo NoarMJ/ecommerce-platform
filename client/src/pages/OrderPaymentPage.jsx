@@ -29,13 +29,19 @@ export default function OrderPaymentPage() {
   const [phone, setPhone] = useState(state?.phone ?? '')
   const [phoneError, setPhoneError] = useState('')
   const [retryError, setRetryError] = useState(state?.promptError ?? '')
-  const [now, setNow] = useState(() => Date.now())
+
+
+   const [now, setNow] = useState(() => Date.now())
+  const [pollMs, setPollMs] = useState(3000)
 
   const { data: order } = useGetOrderByIdQuery(orderId)
-  const { data: status, isLoading, isError } = useGetPaymentStatusQuery(orderId, {
-    pollingInterval: 3000,
+  const { data: status, isLoading, isError, refetch } = useGetPaymentStatusQuery(orderId, {
+    pollingInterval: pollMs, // 0 = stop polling
+    skipPollingIfUnfocused: true, // pause while the tab is in the background
   })
   const [payOrderWithMpesa, { isLoading: isSending }] = usePayOrderWithMpesaMutation()
+
+
 
   // Lets us notice when we have waited too long.
   useEffect(() => {
@@ -50,11 +56,31 @@ export default function OrderPaymentPage() {
     if (paid) navigate(`/orders/${orderId}/confirmation`, { replace: true })
   }, [paid, navigate, orderId])
 
-  const latest = status?.latestPayment
+
+
+   const latest = status?.latestPayment
   const startedAt = latest ? new Date(latest.startedAt).getTime() : 0
   const waitedTooLong = latest?.status === 'initiated' && now - startedAt > STOP_WAITING_AFTER_MS
-  const isWaiting = latest?.status === 'initiated' && !waitedTooLong && !retryError
+
+  // A live prompt means we are waiting, whatever happened at checkout (e.g. a 409).
+  const isWaiting = latest?.status === 'initiated' && !waitedTooLong
   const canRetry = !isWaiting && !paid
+
+  // Poll only while a payment is genuinely pending; slow down after 30 seconds.
+  const keepPolling = !paid && isWaiting
+  const slowPoll = !!latest && now - startedAt > 30_000
+  useEffect(() => {
+    setPollMs(!keepPolling ? 0 : slowPoll ? 6000 : 3000)
+  }, [keepPolling, slowPoll])
+
+  // Don't show a stale error while a prompt is live.
+  useEffect(() => {
+    if (isWaiting) setRetryError('')
+  }, [isWaiting])
+
+
+
+
 
   const handleRetry = async () => {
     setRetryError('')
@@ -73,10 +99,12 @@ export default function OrderPaymentPage() {
     try {
       await payOrderWithMpesa({ orderId, phone }).unwrap()
       setNow(Date.now())
+      refetch()
     } catch (error) {
       setRetryError(
         error?.data?.message ?? 'We could not send the M-Pesa prompt. Please try again.'
       )
+      refetch()
     }
   }
 

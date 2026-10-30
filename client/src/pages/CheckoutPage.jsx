@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState , useRef } from 'react'
 import {
   Alert,
   Box,
@@ -55,6 +55,10 @@ export default function CheckoutPage() {
   const [fieldErrors, setFieldErrors] = useState({})
   const [submitError, setSubmitError] = useState('')
 
+  const submittingRef = useRef(false)
+    const [isSubmitting, setIsSubmitting] = useState(false)
+
+
   const items = cart?.items ?? cart?.data?.items ?? []
   const subtotal = items.reduce(
     (sum, item) => sum + (item.product?.priceMinor ?? 0) * item.quantity,
@@ -87,11 +91,15 @@ export default function CheckoutPage() {
 
   const handleSubmit = async (event) => {
     event.preventDefault()
+    if(submittingRef.current) return
     setSubmitError('')
 
     const errors = validate()
     setFieldErrors(errors)
     if (Object.keys(errors).length > 0) return
+
+    submittingRef.current = true
+    setIsSubmitting(true)
 
     try {
       const order = await placeOrder({
@@ -118,8 +126,12 @@ export default function CheckoutPage() {
             phone: mpesaPhone.trim() || form.phone,
             }).unwrap()
         } catch (error) {
-            promptError =
-            error?.data?.message ?? 'We could not send the M-Pesa prompt. Please try again.'
+             setSubmitError(
+                error?.data?.message ?? 'We could not place your order. Please try again.'
+                      )
+                  submittingRef.current = false // unlock only when the order itself failed
+              setIsSubmitting(false)
+        
         }
 
         navigate(`/orders/${order._id}/payment`, {
@@ -153,7 +165,7 @@ navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (err
   }
 
   // Nothing to check out.
-  if (items.length === 0) {
+  if (items.length === 0 && !isSubmitting) {
     return <Navigate to="/cart" replace />
   }
 
@@ -354,9 +366,9 @@ navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (err
                 variant="contained"
                 size="large"
                 fullWidth
-                disabled={isPlacing}
+                disabled={isPlacing || isSubmitting}
               >
-                {isPlacing ? 'Placing order…' : 'Place order'}
+                {isPlacing || isSubmitting ? 'Placing order…' : 'Place order'}
               </Button>
               <Button component={Link} to="/cart" fullWidth>
                 Back to cart
