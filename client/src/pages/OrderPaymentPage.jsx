@@ -16,12 +16,19 @@ import {
   useGetPaymentStatusQuery,
   usePayOrderWithMpesaMutation,
 } from '../services/api'
+import { usePaymentSocket } from '../hooks/usePaymentSocket'
 import { formatPrice } from '../utils/formatPrice'
 
 const PHONE_PATTERN = /^(?:\+?254|0)[17]\d{8}$/
 const STOP_WAITING_AFTER_MS = 2 * 60 * 1000
 const POLL_EVERY_MS = 3000
-const FINAL_PAYMENT_STATUSES = ['succeeded', 'failed', 'cancelled', 'needs_review']
+
+const FINAL_PAYMENT_STATUSES = [
+  'succeeded',
+  'failed',
+  'cancelled',
+  'needs_review',
+]
 
 export default function OrderPaymentPage() {
   const { orderId } = useParams()
@@ -34,7 +41,11 @@ export default function OrderPaymentPage() {
   const [now, setNow] = useState(() => Date.now())
   const [pollingInterval, setPollingInterval] = useState(POLL_EVERY_MS)
 
+  // Subscribe to real-time updates for this order.
+  const { isLive } = usePaymentSocket(orderId)
+
   const { data: order } = useGetOrderByIdQuery(orderId)
+
   const {
     data: status,
     isLoading,
@@ -42,59 +53,85 @@ export default function OrderPaymentPage() {
     isFetching,
     refetch,
   } = useGetPaymentStatusQuery(orderId, {
-    pollingInterval,
+    // Use Socket.IO when connected; otherwise fall back to HTTP polling.
+    pollingInterval: isLive ? 0 : pollingInterval,
     skipPollingIfUnfocused: true,
   })
-  const [payOrderWithMpesa, { isLoading: isSending }] = usePayOrderWithMpesaMutation()
 
-  // Lets us notice when we have waited too long.
+  const [payOrderWithMpesa, { isLoading: isSending }] =
+    usePayOrderWithMpesaMutation()
+
+  // Update the current time so the payment timeout can be detected.
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 5000)
+
     return () => clearInterval(timer)
   }, [])
 
   const paid = status?.paymentStatus === 'paid'
   const latest = status?.latestPayment
-  const startedAt = latest ? new Date(latest.startedAt).getTime() : 0
-  const waitedTooLong = latest?.status === 'initiated' && now - startedAt > STOP_WAITING_AFTER_MS
-  const isWaiting = latest?.status === 'initiated' && !waitedTooLong && !retryError
-  const canRetry = !isWaiting && !paid
 
-  // Nothing more will change on its own: stop asking the server.
-  const isFinal = paid || FINAL_PAYMENT_STATUSES.includes(latest?.status)
+  const startedAt = latest?.startedAt
+    ? new Date(latest.startedAt).getTime()
+    : 0
+
+  const waitedTooLong =
+    latest?.status === 'initiated' &&
+    startedAt > 0 &&
+    now - startedAt > STOP_WAITING_AFTER_MS
+
+  const isWaiting =
+    latest?.status === 'initiated' &&
+    !waitedTooLong &&
+    !retryError
+
+  // Do not offer another payment prompt for a payment already received
+  // or one that requires manual verification.
+  const canRetry =
+    !isWaiting &&
+    !paid &&
+    latest?.status !== 'succeeded' &&
+    latest?.status !== 'needs_review'
+
+  // Stop polling when the payment reaches a final state or times out.
+  const isFinal =
+    paid || FINAL_PAYMENT_STATUSES.includes(latest?.status)
+
   const shouldPoll = !isFinal && !waitedTooLong
 
   useEffect(() => {
     setPollingInterval(shouldPoll ? POLL_EVERY_MS : 0)
   }, [shouldPoll])
 
-  // Payment confirmed: go to the confirmation page.
+  // Payment confirmed: redirect to the order confirmation page.
   useEffect(() => {
-    if (paid) navigate(`/orders/${orderId}/confirmation`, { replace: true })
+    if (paid) {
+      navigate(`/orders/${orderId}/confirmation`, { replace: true })
+    }
   }, [paid, navigate, orderId])
 
   const handleRetry = async () => {
     setRetryError('')
     setPhoneError('')
 
-    if (phone.trim() && !PHONE_PATTERN.test(phone.replace(/[\s-]/g, ''))) {
+    const normalizedPhone = phone.replace(/[\s-]/g, '')
+
+    if (!PHONE_PATTERN.test(normalizedPhone)) {
       setPhoneError('Enter a valid Safaricom number, e.g. 0712345678')
       return
     }
 
-    if (!phone.trim()) {
-      setPhoneError('Enter the number that should receive the prompt')
-      return
-    }
-
     try {
-      // Invalidates the 'Order' tag, so the status is re-fetched once.
-      // The new payment comes back as "initiated" and polling resumes by itself.
-      await payOrderWithMpesa({ orderId, phone }).unwrap()
+      await payOrderWithMpesa({
+        orderId,
+        phone: normalizedPhone,
+      }).unwrap()
+
       setNow(Date.now())
     } catch (error) {
       setRetryError(
-        error?.data?.message ?? 'We could not send the M-Pesa prompt. Please try again.'
+        error?.data?.message ??
+          'We could not send the M-Pesa prompt. Please try again.'
       )
     }
   }
@@ -110,7 +147,10 @@ export default function OrderPaymentPage() {
   if (isError || !status) {
     return (
       <Container maxWidth="sm" sx={{ py: 6 }}>
-        <Alert severity="error">We couldn’t find this order.</Alert>
+        <Alert severity="error">
+          We couldn't find this order.
+        </Alert>
+
         <Button component={Link} to="/my-orders" sx={{ mt: 2 }}>
           View my orders
         </Button>
@@ -118,26 +158,39 @@ export default function OrderPaymentPage() {
     )
   }
 
-  // Only M-Pesa orders that are still unpaid belong on this page.
-  if (status.paymentMethod !== 'mpesa' || status.orderStatus === 'cancelled') {
-    return <Navigate to={`/orders/${orderId}/confirmation`} replace />
+  // Only unpaid M-Pesa orders belong on this page.
+  if (
+    status.paymentMethod !== 'mpesa' ||
+    status.orderStatus === 'cancelled'
+  ) {
+    return (
+      <Navigate
+        to={`/orders/${orderId}/confirmation`}
+        replace
+      />
+    )
   }
 
   return (
     <Container maxWidth="sm" sx={{ py: { xs: 4, md: 8 } }}>
       <Paper variant="outlined" sx={{ p: { xs: 3, md: 4 } }}>
         <Stack spacing={3} alignItems="center" textAlign="center">
+
           {isWaiting ? (
             <>
               <CircularProgress size={48} />
+
               <Box>
                 <Typography variant="h5" fontWeight={700}>
                   Check your phone
                 </Typography>
+
                 <Typography color="text.secondary" sx={{ mt: 1 }}>
                   Enter your M-Pesa PIN on the prompt to pay{' '}
-                  <strong>{order ? formatPrice(order.totalMinor) : ''}</strong>.
-                  This page updates by itself once the payment is received.
+                  <strong>
+                    {order ? formatPrice(order.totalMinor) : ''}
+                  </strong>.
+                  This page updates automatically once the payment is received.
                 </Typography>
               </Box>
             </>
@@ -148,12 +201,17 @@ export default function OrderPaymentPage() {
                   ? 'Payment cancelled'
                   : latest?.status === 'needs_review'
                     ? 'We are checking your payment'
-                    : 'Payment not completed'}
+                    : latest?.status === 'succeeded'
+                      ? 'Payment received'
+                      : 'Payment not completed'}
               </Typography>
+
               <Typography color="text.secondary" sx={{ mt: 1 }}>
                 {latest?.status === 'needs_review'
-                  ? 'Your payment was received but needs a quick manual check. Please contact us with your order number.'
-                  : 'Your order is saved. Send a new M-Pesa prompt to finish paying.'}
+                  ? 'Your payment was received but needs a manual check. Please contact us with your order number.'
+                  : latest?.status === 'succeeded'
+                    ? 'Your payment was received. Your order is being updated.'
+                    : 'Your order is saved. Send a new M-Pesa prompt to finish paying.'}
               </Typography>
             </Box>
           )}
@@ -164,16 +222,24 @@ export default function OrderPaymentPage() {
             </Typography>
           )}
 
-          {retryError && <Alert severity="error" sx={{ width: '100%' }}>{retryError}</Alert>}
+          {retryError && (
+            <Alert severity="error" sx={{ width: '100%' }}>
+              {retryError}
+            </Alert>
+          )}
 
-          {/* We stopped polling after the time limit, but the payment may still arrive. */}
+          {/* Manual check remains available after the waiting timeout. */}
           {waitedTooLong && (
-            <Button variant="outlined" onClick={refetch} disabled={isFetching}>
-              {isFetching ? 'Checking…' : 'I have paid – check again'}
+            <Button
+              variant="outlined"
+              onClick={refetch}
+              disabled={isFetching}
+            >
+              {isFetching ? 'Checking...' : 'I have paid – check again'}
             </Button>
           )}
 
-          {canRetry && latest?.status !== 'needs_review' && (
+          {canRetry && (
             <Stack spacing={2} sx={{ width: '100%' }}>
               <TextField
                 label="M-Pesa phone number"
@@ -184,20 +250,28 @@ export default function OrderPaymentPage() {
                 placeholder="0712345678"
                 fullWidth
               />
+
               <Button
                 variant="contained"
                 size="large"
                 onClick={handleRetry}
                 disabled={isSending}
               >
-                {isSending ? 'Sending prompt…' : 'Send M-Pesa prompt again'}
+                {isSending
+                  ? 'Sending prompt...'
+                  : 'Send M-Pesa prompt again'}
               </Button>
             </Stack>
           )}
 
-          <Button component={Link} to="/my-orders" color="inherit">
+          <Button
+            component={Link}
+            to="/my-orders"
+            color="inherit"
+          >
             Pay later from my orders
           </Button>
+
         </Stack>
       </Paper>
     </Container>

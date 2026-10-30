@@ -1,6 +1,8 @@
+
 const Payment = require('../models/payment');
 const Order = require('../models/order');
 const { normaliseKenyanPhone } = require('./orderService');
+const { notifyPaymentUpdated } = require('./paymentEvents');
 
 const BASE_URL =
   process.env.MPESA_ENV === 'production'
@@ -22,6 +24,7 @@ function assertConfigured() {
     'MPESA_CALLBACK_BASE_URL',
     'MPESA_CALLBACK_SECRET',
   ];
+
   const missing = required.filter((name) => !process.env[name]);
 
   if (missing.length > 0) {
@@ -42,7 +45,12 @@ async function getAccessToken() {
   );
 
   if (!response.ok) {
-    console.error('M-Pesa token request failed:', response.status, await response.text());
+    console.error(
+      'M-Pesa token request failed:',
+      response.status,
+      await response.text()
+    );
+
     throw httpError(502, 'Could not reach M-Pesa. Please try again.');
   }
 
@@ -60,9 +68,11 @@ async function initiateStkPush({ order, userId, phone }) {
   assertConfigured();
 
   const normalised = normaliseKenyanPhone(phone);
+
   if (!normalised) {
     throw httpError(400, 'Please enter a valid Kenyan phone number.');
   }
+
   const msisdn = normalised.replace('+', ''); // Safaricom wants 2547XXXXXXXX
 
   // Create our record first, so the callback always has something to match.
@@ -76,6 +86,7 @@ async function initiateStkPush({ order, userId, phone }) {
   try {
     const token = await getAccessToken();
     const timestamp = createTimestamp();
+
     const password = Buffer.from(
       `${process.env.MPESA_SHORTCODE}${process.env.MPESA_PASSKEY}${timestamp}`
     ).toString('base64');
@@ -109,24 +120,31 @@ async function initiateStkPush({ order, userId, phone }) {
 
     if (!response.ok || data.ResponseCode !== '0') {
       console.error('STK push rejected:', response.status, data);
-      throw httpError(502, 'M-Pesa could not send the payment prompt. Please try again.');
+
+      throw httpError(
+        502,
+        'M-Pesa could not send the payment prompt. Please try again.'
+      );
     }
 
     payment.checkoutRequestId = data.CheckoutRequestID;
     payment.merchantRequestId = data.MerchantRequestID;
+
     await payment.save();
 
     return payment;
   } catch (error) {
     payment.status = 'failed';
     payment.resultDesc = error.message;
+
     await payment.save();
+
     throw error;
   }
 }
 
-// Called when Safaricom reports what happened. This is the only thing
-// allowed to mark an order as paid.
+// Called when Safaricom reports what happened.
+// This is the only thing allowed to mark an order as paid.
 async function handleStkCallback(body) {
   const callback = body?.Body?.stkCallback;
 
@@ -135,16 +153,21 @@ async function handleStkCallback(body) {
     return;
   }
 
-  const payment = await Payment.findOne({ checkoutRequestId: callback.CheckoutRequestID });
+  const payment = await Payment.findOne({
+    checkoutRequestId: callback.CheckoutRequestID,
+  });
 
   if (!payment) {
-    console.warn('Callback for an unknown payment:', callback.CheckoutRequestID);
+    console.warn(
+      'Callback for an unknown payment:',
+      callback.CheckoutRequestID
+    );
     return;
   }
 
   // Failure, cancellation or timeout.
   if (callback.ResultCode !== 0) {
-    await Payment.findOneAndUpdate(
+    const changed = await Payment.findOneAndUpdate(
       { _id: payment._id, status: 'initiated' },
       {
         $set: {
@@ -155,15 +178,24 @@ async function handleStkCallback(body) {
         },
       }
     );
+
+    // Notify only when the payment status actually changed.
+    if (changed) {
+      notifyPaymentUpdated(payment.order);
+    }
+
     return;
   }
 
   // Success: read the details Safaricom sends.
   const items = callback.CallbackMetadata?.Item ?? [];
-  const read = (name) => items.find((item) => item.Name === name)?.Value;
+
+  const read = (name) =>
+    items.find((item) => item.Name === name)?.Value;
 
   const paidAmount = Number(read('Amount'));
   const receipt = read('MpesaReceiptNumber');
+
   const expectedAmount = Math.ceil(payment.amountMinor / 100);
   const amountMatches = paidAmount === expectedAmount;
 
@@ -184,17 +216,28 @@ async function handleStkCallback(body) {
 
   if (!updated) return; // already handled
 
+  // Payment amount does not match the expected amount.
   if (!amountMatches) {
     console.error(
       `Payment ${payment._id}: expected KSh ${expectedAmount} but received ${paidAmount}. Check by hand.`
     );
+
+    notifyPaymentUpdated(payment.order);
+
     return;
   }
 
+  // Mark the order as paid.
   await Order.updateOne(
     { _id: payment.order, paymentStatus: 'pending' },
     { $set: { paymentStatus: 'paid' } }
   );
+
+  // Notify connected clients that payment processing has completed.
+  notifyPaymentUpdated(payment.order);
 }
 
-module.exports = { initiateStkPush, handleStkCallback };
+module.exports = {
+  initiateStkPush,
+  handleStkCallback,
+};

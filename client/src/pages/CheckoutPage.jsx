@@ -1,4 +1,5 @@
-import { useState , useRef } from 'react'
+
+import { useState, useRef } from 'react'
 import {
   Alert,
   Box,
@@ -16,24 +17,29 @@ import {
   Typography,
 } from '@mui/material'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
+
 import {
   useGetCartQuery,
   useGetMeQuery,
   usePlaceOrderMutation,
   usePayOrderWithMpesaMutation,
 } from '../services/api'
+
 import { formatPrice } from '../utils/formatPrice'
 
 const PHONE_PATTERN = /^(?:\+?254|0)[17]\d{8}$/
 
 export default function CheckoutPage() {
   const navigate = useNavigate()
+
   const { data: user } = useGetMeQuery()
   const { data: cart, isLoading, isError } = useGetCartQuery()
-  const [placeOrder, { isLoading: isPlacing }] = usePlaceOrderMutation()
 
-  // One key per visit to this page. A retry or double-click reuses it,
-  // so the backend returns the same order instead of creating another.
+  const [placeOrder, { isLoading: isPlacing }] = usePlaceOrderMutation()
+  const [payOrderWithMpesa] = usePayOrderWithMpesaMutation()
+
+  // One key per visit to this page.
+  // A retry or double-click reuses it, preventing duplicate orders.
   const [idempotencyKey] = useState(() => crypto.randomUUID())
 
   const [form, setForm] = useState({
@@ -46,62 +52,91 @@ export default function CheckoutPage() {
     postalCode: '',
     customerNote: '',
   })
+
   const [paymentMethod, setPaymentMethod] = useState('cash_on_delivery')
-
-  const [payOrderWithMpesa] = usePayOrderWithMpesaMutation()
-    const [mpesaPhone, setMpesaPhone] = useState('')
-
+  const [mpesaPhone, setMpesaPhone] = useState('')
 
   const [fieldErrors, setFieldErrors] = useState({})
   const [submitError, setSubmitError] = useState('')
 
+  // Prevent duplicate submissions before React re-renders.
   const submittingRef = useRef(false)
-    const [isSubmitting, setIsSubmitting] = useState(false)
-
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const items = cart?.items ?? cart?.data?.items ?? []
+
   const subtotal = items.reduce(
-    (sum, item) => sum + (item.product?.priceMinor ?? 0) * item.quantity,
+    (sum, item) =>
+      sum + (item.product?.priceMinor ?? 0) * item.quantity,
     0
   )
 
   const handleChange = (event) => {
     const { name, value } = event.target
-    setForm((prev) => ({ ...prev, [name]: value }))
-    setFieldErrors((prev) => ({ ...prev, [name]: undefined }))
+
+    setForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }))
+
+    setFieldErrors((prev) => ({
+      ...prev,
+      [name]: undefined,
+    }))
   }
 
   const validate = () => {
     const errors = {}
-    if (!form.fullName.trim()) errors.fullName = 'Full name is required'
-    if (!PHONE_PATTERN.test(form.phone.replace(/[\s-]/g, '')))
+
+    if (!form.fullName.trim()) {
+      errors.fullName = 'Full name is required'
+    }
+
+    if (!PHONE_PATTERN.test(form.phone.replace(/[\s-]/g, ''))) {
       errors.phone = 'Enter a valid Kenyan number, e.g. 0712345678'
-    if (!form.addressLine1.trim()) errors.addressLine1 = 'Address is required'
-    if (!form.city.trim()) errors.city = 'City is required'
-    if (!form.county.trim()) errors.county = 'County is required'
+    }
+
+    if (!form.addressLine1.trim()) {
+      errors.addressLine1 = 'Address is required'
+    }
+
+    if (!form.city.trim()) {
+      errors.city = 'City is required'
+    }
+
+    if (!form.county.trim()) {
+      errors.county = 'County is required'
+    }
+
     if (
-        paymentMethod === 'mpesa' &&
-        mpesaPhone.trim() &&
-        !PHONE_PATTERN.test(mpesaPhone.replace(/[\s-]/g, ''))
-        ) {
-        errors.mpesaPhone = 'Enter a valid Safaricom number, e.g. 0712345678'
-        }
+      paymentMethod === 'mpesa' &&
+      mpesaPhone.trim() &&
+      !PHONE_PATTERN.test(mpesaPhone.replace(/[\s-]/g, ''))
+    ) {
+      errors.mpesaPhone = 'Enter a valid Safaricom number, e.g. 0712345678'
+    }
+
     return errors
   }
 
   const handleSubmit = async (event) => {
     event.preventDefault()
-    if(submittingRef.current) return
+
+    // Prevent another submission while one is already processing.
+    if (submittingRef.current) return
+
     setSubmitError('')
 
     const errors = validate()
     setFieldErrors(errors)
+
     if (Object.keys(errors).length > 0) return
 
     submittingRef.current = true
     setIsSubmitting(true)
 
     try {
+      // Step 1: Create the order.
       const order = await placeOrder({
         idempotencyKey,
         shippingAddress: {
@@ -117,33 +152,50 @@ export default function CheckoutPage() {
         customerNote: form.customerNote,
       }).unwrap()
 
-        if (paymentMethod === 'mpesa') {
-        // Send the prompt. If it fails, the payment page offers a retry.
+      // Step 2: Handle M-Pesa payment separately.
+      if (paymentMethod === 'mpesa') {
         let promptError = ''
+
         try {
-            await payOrderWithMpesa({
+          await payOrderWithMpesa({
             orderId: order._id,
             phone: mpesaPhone.trim() || form.phone,
-            }).unwrap()
+          }).unwrap()
         } catch (error) {
-             setSubmitError(
-                error?.data?.message ?? 'We could not place your order. Please try again.'
-                      )
-                  submittingRef.current = false // unlock only when the order itself failed
-              setIsSubmitting(false)
-        
+          // The order already exists.
+          // Preserve the payment error and continue to the payment page.
+          promptError =
+            error?.data?.message ??
+            'We could not send the M-Pesa prompt. Please try again.'
         }
 
+        // Navigate whether the prompt succeeded or failed.
+        // The payment page will handle retries if necessary.
         navigate(`/orders/${order._id}/payment`, {
-            replace: true,
-            state: { promptError, phone: mpesaPhone.trim() || form.phone },
+          replace: true,
+          state: {
+            promptError,
+            phone: mpesaPhone.trim() || form.phone,
+          },
         })
-        return
-        }
 
-navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (error) {
+        return
+      }
+
+      // Step 3: Cash on delivery.
+      navigate(`/orders/${order._id}/confirmation`, {
+        replace: true,
+      })
+
+    } catch (error) {
+      // The order itself failed.
+      // Unlock the button so the customer can try again.
+      submittingRef.current = false
+      setIsSubmitting(false)
+
       setSubmitError(
-        error?.data?.message ?? 'We could not place your order. Please try again.'
+        error?.data?.message ??
+        'We could not place your order. Please try again.'
       )
     }
   }
@@ -159,7 +211,9 @@ navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (err
   if (isError) {
     return (
       <Container maxWidth="lg" sx={{ py: 6 }}>
-        <Alert severity="error">We couldn’t load your cart. Please refresh.</Alert>
+        <Alert severity="error">
+          We couldn’t load your cart. Please refresh.
+        </Alert>
       </Container>
     )
   }
@@ -178,8 +232,14 @@ navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (err
       <Grid container spacing={3}>
         {/* Delivery + payment form */}
         <Grid size={{ xs: 12, md: 7 }}>
-          <Box component="form" onSubmit={handleSubmit} noValidate id="checkout-form">
+          <Box
+            component="form"
+            onSubmit={handleSubmit}
+            noValidate
+            id="checkout-form"
+          >
             <Stack spacing={3}>
+              {/* Delivery details */}
               <Paper variant="outlined" sx={{ p: 3 }}>
                 <Typography variant="h6" sx={{ mb: 2 }}>
                   Delivery details
@@ -192,31 +252,41 @@ navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (err
                     value={form.fullName}
                     onChange={handleChange}
                     error={!!fieldErrors.fullName}
-                    helperText={fieldErrors.fullName ?? 'Who will receive the order'}
+                    helperText={
+                      fieldErrors.fullName ?? 'Who will receive the order'
+                    }
                     required
                     fullWidth
                   />
+
                   <TextField
                     label="Phone number"
                     name="phone"
                     value={form.phone}
                     onChange={handleChange}
                     error={!!fieldErrors.phone}
-                    helperText={fieldErrors.phone ?? 'The courier will call this number'}
+                    helperText={
+                      fieldErrors.phone ?? 'The courier will call this number'
+                    }
                     placeholder="0712345678"
                     required
                     fullWidth
                   />
+
                   <TextField
                     label="Address"
                     name="addressLine1"
                     value={form.addressLine1}
                     onChange={handleChange}
                     error={!!fieldErrors.addressLine1}
-                    helperText={fieldErrors.addressLine1 ?? 'House number, street or building'}
+                    helperText={
+                      fieldErrors.addressLine1 ??
+                      'House number, street or building'
+                    }
                     required
                     fullWidth
                   />
+
                   <TextField
                     label="Apartment or directions (optional)"
                     name="addressLine2"
@@ -224,7 +294,11 @@ navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (err
                     onChange={handleChange}
                     fullWidth
                   />
-                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+
+                  <Stack
+                    direction={{ xs: 'column', sm: 'row' }}
+                    spacing={2}
+                  >
                     <TextField
                       label="City"
                       name="city"
@@ -235,6 +309,7 @@ navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (err
                       required
                       fullWidth
                     />
+
                     <TextField
                       label="County"
                       name="county"
@@ -246,6 +321,7 @@ navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (err
                       fullWidth
                     />
                   </Stack>
+
                   <TextField
                     label="Postal code (optional)"
                     name="postalCode"
@@ -253,12 +329,15 @@ navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (err
                     onChange={handleChange}
                     fullWidth
                   />
+
                   <TextField
                     label="Delivery note (optional)"
                     name="customerNote"
                     value={form.customerNote}
                     onChange={handleChange}
-                    slotProps={{ htmlInput: { maxLength: 500 } }}
+                    slotProps={{
+                      htmlInput: { maxLength: 500 },
+                    }}
                     multiline
                     minRows={2}
                     fullWidth
@@ -266,59 +345,73 @@ navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (err
                 </Stack>
               </Paper>
 
+              {/* Payment method */}
               <Paper variant="outlined" sx={{ p: 3 }}>
                 <Typography variant="h6" sx={{ mb: 1 }}>
-                    Payment method
+                  Payment method
                 </Typography>
 
                 <RadioGroup
-                    value={paymentMethod}
-                    onChange={(event) => setPaymentMethod(event.target.value)}
+                  value={paymentMethod}
+                  onChange={(event) =>
+                    setPaymentMethod(event.target.value)
+                  }
                 >
-                    <FormControlLabel
+                  <FormControlLabel
                     value="mpesa"
                     control={<Radio />}
                     label="M-Pesa (pay now on your phone)"
-                    />
-                    <FormControlLabel
+                  />
+
+                  <FormControlLabel
                     value="cash_on_delivery"
                     control={<Radio />}
                     label="Cash on delivery"
-                    />
+                  />
                 </RadioGroup>
 
                 {paymentMethod === 'mpesa' ? (
-                    <Stack spacing={1.5} sx={{ mt: 2 }}>
+                  <Stack spacing={1.5} sx={{ mt: 2 }}>
                     <TextField
-                        label="M-Pesa phone number"
-                        value={mpesaPhone}
-                        onChange={(event) => {
+                      label="M-Pesa phone number"
+                      value={mpesaPhone}
+                      onChange={(event) => {
                         setMpesaPhone(event.target.value)
-                        setFieldErrors((prev) => ({ ...prev, mpesaPhone: undefined }))
-                        }}
-                        error={!!fieldErrors.mpesaPhone}
-                        helperText={
+
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          mpesaPhone: undefined,
+                        }))
+                      }}
+                      error={!!fieldErrors.mpesaPhone}
+                      helperText={
                         fieldErrors.mpesaPhone ??
                         'Leave empty to use the delivery phone number. A payment prompt will be sent to this number.'
-                        }
-                        placeholder="0712345678"
-                        fullWidth
+                      }
+                      placeholder="0712345678"
+                      fullWidth
                     />
-                    </Stack>
+                  </Stack>
                 ) : (
-                    <Typography variant="caption" color="text.secondary">
+                  <Typography variant="caption" color="text.secondary">
                     You pay when your order arrives.
-                    </Typography>
+                  </Typography>
                 )}
-                </Paper>
-
+              </Paper>
             </Stack>
           </Box>
         </Grid>
 
         {/* Order summary */}
         <Grid size={{ xs: 12, md: 5 }}>
-          <Paper variant="outlined" sx={{ p: 3, position: { md: 'sticky' }, top: 24 }}>
+          <Paper
+            variant="outlined"
+            sx={{
+              p: 3,
+              position: { md: 'sticky' },
+              top: 24,
+            }}
+          >
             <Typography variant="h6" sx={{ mb: 2 }}>
               Order summary
             </Typography>
@@ -334,8 +427,11 @@ navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (err
                   <Typography variant="body2" sx={{ minWidth: 0 }}>
                     {item.product?.name} × {item.quantity}
                   </Typography>
+
                   <Typography variant="body2" fontWeight={600}>
-                    {formatPrice((item.product?.priceMinor ?? 0) * item.quantity)}
+                    {formatPrice(
+                      (item.product?.priceMinor ?? 0) * item.quantity
+                    )}
                   </Typography>
                 </Stack>
               ))}
@@ -343,22 +439,42 @@ navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (err
               <Divider />
 
               <Stack direction="row" justifyContent="space-between">
-                <Typography color="text.secondary">Subtotal</Typography>
-                <Typography>{formatPrice(subtotal)}</Typography>
+                <Typography color="text.secondary">
+                  Subtotal
+                </Typography>
+
+                <Typography>
+                  {formatPrice(subtotal)}
+                </Typography>
               </Stack>
+
               <Stack direction="row" justifyContent="space-between">
-                <Typography color="text.secondary">Delivery</Typography>
-                <Typography>Calculated at order</Typography>
+                <Typography color="text.secondary">
+                  Delivery
+                </Typography>
+
+                <Typography>
+                  Calculated at order
+                </Typography>
               </Stack>
+
               <Divider />
+
               <Stack direction="row" justifyContent="space-between">
-                <Typography variant="h6">Total</Typography>
+                <Typography variant="h6">
+                  Total
+                </Typography>
+
                 <Typography variant="h6" fontWeight={700}>
                   {formatPrice(subtotal)}
                 </Typography>
               </Stack>
 
-              {submitError && <Alert severity="error">{submitError}</Alert>}
+              {submitError && (
+                <Alert severity="error">
+                  {submitError}
+                </Alert>
+              )}
 
               <Button
                 type="submit"
@@ -368,8 +484,11 @@ navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (err
                 fullWidth
                 disabled={isPlacing || isSubmitting}
               >
-                {isPlacing || isSubmitting ? 'Placing order…' : 'Place order'}
+                {isPlacing || isSubmitting
+                  ? 'Placing order…'
+                  : 'Place order'}
               </Button>
+
               <Button component={Link} to="/cart" fullWidth>
                 Back to cart
               </Button>
