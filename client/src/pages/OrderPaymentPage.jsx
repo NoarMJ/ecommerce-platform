@@ -52,11 +52,7 @@ export default function OrderPaymentPage() {
     isError,
     isFetching,
     refetch,
-  } = useGetPaymentStatusQuery(orderId, {
-    // Use Socket.IO when connected; otherwise fall back to HTTP polling.
-    pollingInterval: isLive ? 0 : pollingInterval,
-    skipPollingIfUnfocused: true,
-  })
+  } = useGetPaymentStatusQuery(orderId)
 
   const [payOrderWithMpesa, { isLoading: isSending }] =
     usePayOrderWithMpesaMutation()
