@@ -16,12 +16,8 @@ export function usePaymentSocket(orderId) {
   useEffect(() => {
     if (!orderId) return undefined
 
-const socket = io(SOCKET_URL, {
-  withCredentials: true,
-  transports: ['websocket'],
-  reconnection: true,
-  reconnectionAttempts: Infinity,
-})
+    const socket = io(SOCKET_URL, { withCredentials: true })
+
     const saveStatus = (status) => {
       dispatch(api.util.upsertQueryData('getPaymentStatus', orderId, status))
     }
