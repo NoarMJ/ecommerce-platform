@@ -1,29 +1,52 @@
+
 import { useEffect, useState } from 'react'
 import { useDispatch } from 'react-redux'
 import { io } from 'socket.io-client'
 import { api } from '../services/api'
 
-// Socket.IO runs on the API server's origin (VITE_API_BASE_URL ends in /api).
-const SOCKET_URL = new URL(import.meta.env.VITE_API_BASE_URL, window.location.origin).origin
+// Socket.IO connects directly to the API server.
+const SOCKET_URL = new URL(
+  import.meta.env.VITE_API_BASE_URL,
+  window.location.origin,
+).origin
 
-// Follows one order's payment over a socket and writes every update
-// into the RTK Query cache used by useGetPaymentStatusQuery.
-// isLive is true while the server is pushing updates for this order.
 export function usePaymentSocket(orderId) {
   const dispatch = useDispatch()
   const [isLive, setIsLive] = useState(false)
 
   useEffect(() => {
-    if (!orderId) return undefined
-
-    const socket = io(SOCKET_URL, { withCredentials: true })
-
-    const saveStatus = (status) => {
-      dispatch(api.util.upsertQueryData('getPaymentStatus', orderId, status))
+    if (!orderId) {
+      setIsLive(false)
+      return undefined
     }
 
-    // Runs on the first connect and after every reconnect,
-    // because the server forgets rooms when a socket drops.
+    const socket = io(SOCKET_URL, {
+      withCredentials: true,
+
+      // WebSocket only: no HTTP long-polling or fallback.
+      transports: ['websocket'],
+
+      // Automatically reconnect if the connection drops.
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+    })
+
+    // Update the RTK Query cache with the latest payment status.
+    const saveStatus = (status) => {
+      if (!status) return
+
+      dispatch(
+        api.util.upsertQueryData(
+          'getPaymentStatus',
+          orderId,
+          status,
+        ),
+      )
+    }
+
+    // Subscribe to the order after connecting or reconnecting.
     const watch = () => {
       socket.emit('payment:watch', orderId, (reply) => {
         if (reply?.ok) {
@@ -35,8 +58,16 @@ export function usePaymentSocket(orderId) {
       })
     }
 
-    const handleUpdate = (event) => saveStatus(event.status)
-    const handleDown = () => setIsLive(false)
+    // Receive payment updates from the backend.
+    const handleUpdate = (event) => {
+      if (event?.orderId === orderId) {
+        saveStatus(event.status)
+      }
+    }
+
+    const handleDown = () => {
+      setIsLive(false)
+    }
 
     socket.on('connect', watch)
     socket.on('payment:update', handleUpdate)
@@ -48,7 +79,9 @@ export function usePaymentSocket(orderId) {
       socket.off('payment:update', handleUpdate)
       socket.off('disconnect', handleDown)
       socket.off('connect_error', handleDown)
+
       socket.disconnect()
+      setIsLive(false)
     }
   }, [orderId, dispatch])
 
