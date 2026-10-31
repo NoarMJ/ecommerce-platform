@@ -1,14 +1,16 @@
+
 import { useEffect, useState } from 'react'
 import { useDispatch } from 'react-redux'
 import { io } from 'socket.io-client'
 import { api } from '../services/api'
 
-// Socket.IO runs on the API server's origin (VITE_API_BASE_URL ends in /api).
-const SOCKET_URL = new URL(import.meta.env.VITE_API_BASE_URL, window.location.origin).origin
+// Socket.IO connects directly to the API server using WebSocket.
+const SOCKET_URL = new URL(
+  import.meta.env.VITE_API_BASE_URL,
+  window.location.origin
+).origin
 
-// Follows one order's payment over a socket and writes every update
-// into the RTK Query cache used by useGetPaymentStatusQuery.
-// isLive is true while the server is pushing updates for this order.
+// Follows one order's payment and updates the RTK Query cache.
 export function usePaymentSocket(orderId) {
   const dispatch = useDispatch()
   const [isLive, setIsLive] = useState(false)
@@ -16,14 +18,24 @@ export function usePaymentSocket(orderId) {
   useEffect(() => {
     if (!orderId) return undefined
 
-    const socket = io(SOCKET_URL, { withCredentials: true })
+    const socket = io(SOCKET_URL, {
+      withCredentials: true,
+      transports: ['websocket'],
+    })
 
     const saveStatus = (status) => {
-      dispatch(api.util.upsertQueryData('getPaymentStatus', orderId, status))
+      dispatch(
+        api.util.upsertQueryData(
+          'getPaymentStatus',
+          orderId,
+          status
+        )
+      )
     }
 
-    // Runs on the first connect and after every reconnect,
-    // because the server forgets rooms when a socket drops.
+    // Subscribe to the order after connecting.
+    // Repeat this after reconnection because the server
+    // does not retain socket room membership.
     const watch = () => {
       socket.emit('payment:watch', orderId, (reply) => {
         if (reply?.ok) {
@@ -35,7 +47,12 @@ export function usePaymentSocket(orderId) {
       })
     }
 
-    const handleUpdate = (event) => saveStatus(event.status)
+    const handleUpdate = (event) => {
+      if (event?.status) {
+        saveStatus(event.status)
+      }
+    }
+
     const handleDown = () => setIsLive(false)
 
     socket.on('connect', watch)
@@ -48,6 +65,7 @@ export function usePaymentSocket(orderId) {
       socket.off('payment:update', handleUpdate)
       socket.off('disconnect', handleDown)
       socket.off('connect_error', handleDown)
+
       socket.disconnect()
     }
   }, [orderId, dispatch])
