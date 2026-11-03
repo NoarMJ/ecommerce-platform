@@ -1,4 +1,3 @@
-
 import { useMemo, useState } from 'react'
 import {
   Alert,
@@ -47,9 +46,14 @@ import {
   useActivateProductMutation,
 } from '../../services/api'
 
+import getProductImageUrl from '../../utils/getProductImageUrl';
+
 // ---------------------------------------------------------
 // Constants and helpers
 // ---------------------------------------------------------
+
+const MAX_IMAGES = 5
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024 // 5 MB
 
 const EMPTY_FORM = {
   name: '',
@@ -60,7 +64,10 @@ const EMPTY_FORM = {
   sku: '',
   price: '',
   stock: '',
-  imageUrl: '',
+  imageFiles: [],
+  // Display only: images already saved on the product (edit dialog).
+  // These are never sent back to the API.
+  existingImages: [],
 }
 
 function createSlug(value = '') {
@@ -118,9 +125,29 @@ function formatPrice(priceMinor) {
   }).format(amount / 100)
 }
 
+// Builds multipart form data: product fields + image files.
+// Do not set Content-Type manually; the browser adds the boundary.
+function createProductFormData(payload, imageFiles = []) {
+  const formData = new FormData()
+
+  Object.entries(payload).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      formData.append(key, JSON.stringify(value))
+    } else {
+      formData.append(key, value)
+    }
+  })
+
+  imageFiles.forEach((file) => {
+    formData.append('images', file)
+  })
+
+  return formData
+}
+
 function getInitialForm(product) {
   if (!product) {
-    return { ...EMPTY_FORM, categories: [] }
+    return { ...EMPTY_FORM, categories: [], imageFiles: [], existingImages: [] }
   }
 
   const primaryCategoryId = getId(product.category)
@@ -150,7 +177,10 @@ function getInitialForm(product) {
       product.stock != null
         ? String(product.stock)
         : '',
-    imageUrl: product.images?.[0] ?? '',
+    imageFiles: [],
+    existingImages: Array.isArray(product.images)
+      ? product.images
+      : [],
   }
 }
 
@@ -395,70 +425,108 @@ function ProductFormFields({
       <Divider />
 
       <Typography variant="subtitle2" color="text.secondary">
-        Product image
+        Product images
       </Typography>
 
-      <TextField
-        label="Image URL"
-        value={form.imageUrl}
-        onChange={(event) =>
-          updateField('imageUrl', event.target.value)
-        }
-        fullWidth
-        placeholder="https://example.com/product-image.jpg"
-        helperText="Use a publicly accessible image URL."
-        slotProps={{
-          htmlInput: {
-            type: 'url',
-          },
-        }}
-      />
+      {/* Images already saved on the product (edit dialog only) */}
+      {form.existingImages?.length > 0 && (
+        <Stack spacing={1}>
+          <Typography variant="caption" color="text.secondary">
+            Current images (kept when you save)
+          </Typography>
 
-      {form.imageUrl.trim() && (
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 2,
-            p: 1.5,
-            border: 1,
-            borderColor: 'divider',
-            borderRadius: 2,
-            bgcolor: 'background.default',
+          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+            {form.existingImages.map((image, index) => (
+              <Box
+                key={`existing-${index}`}
+                component="img"
+                src={getProductImageUrl(image)}
+                alt={`Current product image ${index + 1}`}
+                sx={{
+                  width: 64,
+                  height: 64,
+                  objectFit: 'contain',
+                  border: 1,
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  bgcolor: 'background.paper',
+                }}
+              />
+            ))}
+          </Stack>
+        </Stack>
+      )}
+
+      <Button
+        component="label"
+        variant="outlined"
+        startIcon={<ImageOutlinedIcon />}
+        sx={{ alignSelf: 'flex-start' }}
+      >
+        Choose product images
+        <input
+          hidden
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/gif"
+          multiple
+          onChange={(event) => {
+            const selectedFiles = Array.from(event.target.files || [])
+
+            setForm((previous) => ({
+              ...previous,
+              imageFiles: [
+                ...previous.imageFiles,
+                ...selectedFiles,
+              ].slice(0, MAX_IMAGES),
+            }))
+
+            // Lets the admin pick the same file again if needed.
+            event.target.value = ''
           }}
-        >
-          <Box
-            component="img"
-            src={form.imageUrl.trim()}
-            alt="Product preview"
-            onError={(event) => {
-              event.currentTarget.style.visibility = 'hidden'
-            }}
-            onLoad={(event) => {
-              event.currentTarget.style.visibility = 'visible'
-            }}
-            sx={{
-              width: 72,
-              height: 72,
-              objectFit: 'contain',
-              borderRadius: 1,
-              bgcolor: 'background.paper',
-            }}
-          />
+        />
+      </Button>
 
-          <Box sx={{ minWidth: 0 }}>
-            <Typography variant="body2" fontWeight={600}>
-              Image preview
-            </Typography>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ overflowWrap: 'anywhere' }}
+      <Typography variant="caption" color="text.secondary">
+        Select up to 5 images. Maximum 5 MB per image.
+      </Typography>
+
+      {form.imageFiles.length > 0 && (
+        <Stack spacing={1}>
+          {form.imageFiles.map((file, index) => (
+            <Box
+              key={`${file.name}-${index}`}
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 2,
+                p: 1.5,
+                border: 1,
+                borderColor: 'divider',
+                borderRadius: 2,
+              }}
             >
-              {form.imageUrl}
-            </Typography>
-          </Box>
-        </Box>
+              <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>
+                {file.name}
+              </Typography>
+
+              <Button
+                size="small"
+                color="error"
+                onClick={() => {
+                  setForm((previous) => ({
+                    ...previous,
+                    imageFiles: previous.imageFiles.filter(
+                      (_, fileIndex) => fileIndex !== index,
+                    ),
+                  }))
+                }}
+              >
+                Remove
+              </Button>
+            </Box>
+          ))}
+        </Stack>
       )}
     </Stack>
   )
@@ -675,16 +743,20 @@ export default function AdminProducts({ user }) {
       return 'Stock must be a whole number greater than or equal to zero.'
     }
 
+    if (form.imageFiles.length > MAX_IMAGES) {
+      return 'You can upload a maximum of 5 images.'
+    }
+
     if (
-      form.imageUrl.trim() &&
-      !/^https?:\/\/\S+$/i.test(form.imageUrl.trim())
+      form.imageFiles.some((file) => file.size > MAX_IMAGE_SIZE)
     ) {
-      return 'Enter an image URL beginning with http:// or https://.'
+      return 'Each image must be 5 MB or smaller.'
     }
 
     return null
   }
 
+  // Product details only. Images are sent separately as files.
   const buildPayload = (form) => {
     const primaryCategoryId = getId(form.category)
 
@@ -709,9 +781,6 @@ export default function AdminProducts({ user }) {
       sku: form.sku.trim().toUpperCase(),
       priceMinor: Math.round(Number(form.price) * 100),
       stock: Number(form.stock),
-      images: form.imageUrl.trim()
-        ? [form.imageUrl.trim()]
-        : [],
     }
   }
 
@@ -720,7 +789,7 @@ export default function AdminProducts({ user }) {
   // -------------------------------------------------------
 
   const openCreateDialog = () => {
-    setCreateForm({ ...EMPTY_FORM, categories: [] })
+    setCreateForm({ ...EMPTY_FORM, categories: [], imageFiles: [], existingImages: [] })
     setCreateSlugManuallyEdited(false)
     setCreateDialogOpen(true)
     setNotice(null)
@@ -730,7 +799,7 @@ export default function AdminProducts({ user }) {
     if (isCreating) return
 
     setCreateDialogOpen(false)
-    setCreateForm({ ...EMPTY_FORM, categories: [] })
+    setCreateForm({ ...EMPTY_FORM, categories: [], imageFiles: [], existingImages: [] })
   }
 
   const handleCreateProduct = async (event) => {
@@ -749,14 +818,16 @@ export default function AdminProducts({ user }) {
 
     const payload = buildPayload(createForm)
 
-    // Keep this log until product creation works correctly.
-    console.log('Create product payload:', payload)
+    const formData = createProductFormData(
+      payload,
+      createForm.imageFiles,
+    )
 
     try {
-      await createProduct(payload).unwrap()
+      await createProduct(formData).unwrap()
 
       setCreateDialogOpen(false)
-      setCreateForm({ ...EMPTY_FORM, categories: [] })
+      setCreateForm({ ...EMPTY_FORM, categories: [], imageFiles: [], existingImages: [] })
       setCreateSlugManuallyEdited(false)
       setPage(0)
 
@@ -793,7 +864,7 @@ export default function AdminProducts({ user }) {
     if (isUpdating) return
 
     setEditingProduct(null)
-    setEditForm({ ...EMPTY_FORM, categories: [] })
+    setEditForm({ ...EMPTY_FORM, categories: [], imageFiles: [], existingImages: [] })
   }
 
   const handleUpdateProduct = async (event) => {
@@ -813,13 +884,18 @@ export default function AdminProducts({ user }) {
     try {
       const payload = buildPayload(editForm)
 
+      const formData = createProductFormData(
+        payload,
+        editForm.imageFiles,
+      )
+
       await updateProduct({
         id: editingProduct._id,
-        ...payload,
+        formData,
       }).unwrap()
 
       setEditingProduct(null)
-      setEditForm({ ...EMPTY_FORM, categories: [] })
+      setEditForm({ ...EMPTY_FORM, categories: [], imageFiles: [], existingImages: [] })
 
       setNotice({
         type: 'success',
@@ -1282,7 +1358,7 @@ export default function AdminProducts({ user }) {
                             {product.images?.[0] ? (
                               <Box
                                 component="img"
-                                src={product.images[0]}
+                                src={getProductImageUrl(product.images[0])}
                                 alt={product.name}
                                 sx={{
                                   width: '100%',

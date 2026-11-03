@@ -1,24 +1,57 @@
 const Product = require('../models/product');
 const Category = require('../models/category');
 
-// A MongoDB ObjectId is exactly 24 hex characters.
-// (mongoose.isValidObjectId also accepts any 12-character string, so we avoid it.)
+const {
+  uploadImage,
+  deleteImage,
+} = require('../services/cloudinaryService');
+
+// -----------------------------------------------------------------------------
+// Constants
+// -----------------------------------------------------------------------------
+
 const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
 
-// Populate both the primary category and the full category list.
 const CATEGORY_POPULATE = [
   { path: 'category', select: 'name slug' },
   { path: 'categories', select: 'name slug' },
 ];
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// Helper functions
+// -----------------------------------------------------------------------------
 
-// Read category slugs from the query string.
-// Supports: ?category=gaming
-//           ?categories=gaming,electronics
-//           ?categories=gaming&categories=electronics
+const escapeRegex = (value) => {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+};
+
+// Accept categories as either an array or a JSON-encoded array.
+// This is useful because Multer receives multipart form-data fields as strings.
+const normalizeCategoriesInput = (categories) => {
+  if (categories === undefined || categories === null || categories === '') {
+    return undefined;
+  }
+
+  if (Array.isArray(categories)) {
+    return categories;
+  }
+
+  if (typeof categories === 'string') {
+    try {
+      const parsed = JSON.parse(categories);
+
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // Not JSON. Accept a comma-separated list as a fallback.
+      return categories.split(',').map((id) => id.trim()).filter(Boolean);
+    }
+  }
+
+  return categories;
+};
+
 const parseCategorySlugs = (query) => {
   const raw = [query.category, query.categories]
     .flat()
@@ -34,9 +67,6 @@ const parseCategorySlugs = (query) => {
   ];
 };
 
-// Combine the primary `category` and the `categories` array from a request
-// body into one list of unique, valid ID strings.
-// The primary category (if supplied) is always first in the list.
 const collectCategoryIds = (category, categories) => {
   const ids = [];
 
@@ -44,12 +74,14 @@ const collectCategoryIds = (category, categories) => {
     ids.push(category);
   }
 
-  if (categories !== undefined) {
-    if (!Array.isArray(categories)) {
+  const normalizedCategories = normalizeCategoriesInput(categories);
+
+  if (normalizedCategories !== undefined) {
+    if (!Array.isArray(normalizedCategories)) {
       return { error: 'categories must be an array of category IDs.' };
     }
 
-    ids.push(...categories);
+    ids.push(...normalizedCategories);
   }
 
   const normalized = [];
@@ -65,7 +97,6 @@ const collectCategoryIds = (category, categories) => {
   return { ids: [...new Set(normalized)] };
 };
 
-// Confirm that every ID belongs to an existing, active category.
 const allCategoriesActive = async (ids) => {
   const count = await Category.countDocuments({
     _id: { $in: ids },
@@ -75,9 +106,47 @@ const allCategoriesActive = async (ids) => {
   return count === ids.length;
 };
 
-// ---------------------------------------------------------------------------
+// Upload multiple Multer files to Cloudinary.
+// Returns objects containing { url, publicId }.
+const uploadProductImages = async (files = []) => {
+  const uploadedImages = [];
+
+  try {
+    for (const file of files) {
+      const image = await uploadImage(
+        file.buffer,
+        'ecommerce/products'
+      );
+
+      uploadedImages.push(image);
+    }
+
+    return uploadedImages;
+  } catch (error) {
+    // Remove images already uploaded if a later upload fails.
+    await Promise.allSettled(
+      uploadedImages.map((image) => deleteImage(image.publicId))
+    );
+
+    throw error;
+  }
+};
+
+// Remove uploaded Cloudinary images.
+// This is used when the database operation fails.
+const deleteProductImages = async (images = []) => {
+  return Promise.allSettled(
+    images
+      .filter((image) => image?.publicId)
+      .map((image) => deleteImage(image.publicId))
+  );
+};
+
+// -----------------------------------------------------------------------------
 // GET /api/products
-// ---------------------------------------------------------------------------
+// Public product listing
+// -----------------------------------------------------------------------------
+
 const getProducts = async (req, res) => {
   try {
     const page = Math.max(
@@ -95,22 +164,17 @@ const getProducts = async (req, res) => {
       isActive: true,
     };
 
-    // Search product names.
+    // Search by product name.
     const search = req.query.search?.trim();
 
     if (search) {
-      const escapedSearch = search.replace(
-        /[.*+?^${}()|[\]\\]/g,
-        '\\$&'
-      );
-
       filter.name = {
-        $regex: escapedSearch,
+        $regex: escapeRegex(search),
         $options: 'i',
       };
     }
 
-    // Filter by one or multiple category slugs.
+    // Filter by one or more category slugs.
     const categorySlugs = parseCategorySlugs(req.query);
 
     if (categorySlugs.length > 0) {
@@ -119,7 +183,9 @@ const getProducts = async (req, res) => {
         isActive: true,
       }).select('_id');
 
-      const categoryIds = matchingCategories.map((item) => item._id);
+      const categoryIds = matchingCategories.map(
+        (item) => item._id
+      );
 
       if (categoryIds.length === 0) {
         return res.status(200).json({
@@ -135,15 +201,13 @@ const getProducts = async (req, res) => {
         });
       }
 
-      // Match the categories array or the older primary category field,
-      // so products created before multi-category support still appear.
+      // Support both the primary category and additional categories.
       filter.$or = [
         { categories: { $in: categoryIds } },
         { category: { $in: categoryIds } },
       ];
     }
 
-    // Count matching products and retrieve the requested page.
     const [total, products] = await Promise.all([
       Product.countDocuments(filter),
       Product.find(filter)
@@ -165,7 +229,7 @@ const getProducts = async (req, res) => {
       data: products,
     });
   } catch (error) {
-    console.error('Error fetching products:', error.message);
+    console.error('Error fetching products:', error);
 
     return res.status(500).json({
       status: 'error',
@@ -174,9 +238,11 @@ const getProducts = async (req, res) => {
   }
 };
 
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 // GET /api/products/:id
-// ---------------------------------------------------------------------------
+// Public product lookup by ID
+// -----------------------------------------------------------------------------
+
 const getProductById = async (req, res) => {
   try {
     const product = await Product.findOne({
@@ -203,7 +269,7 @@ const getProductById = async (req, res) => {
       });
     }
 
-    console.error('Error fetching product:', error.message);
+    console.error('Error fetching product:', error);
 
     return res.status(500).json({
       status: 'error',
@@ -212,9 +278,11 @@ const getProductById = async (req, res) => {
   }
 };
 
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 // GET /api/products/slug/:slug
-// ---------------------------------------------------------------------------
+// Public product lookup by slug
+// -----------------------------------------------------------------------------
+
 const getProductBySlug = async (req, res) => {
   try {
     const product = await Product.findOne({
@@ -234,7 +302,7 @@ const getProductBySlug = async (req, res) => {
       data: product,
     });
   } catch (error) {
-    console.error('Error fetching product by slug:', error.message);
+    console.error('Error fetching product by slug:', error);
 
     return res.status(500).json({
       status: 'error',
@@ -243,10 +311,14 @@ const getProductBySlug = async (req, res) => {
   }
 };
 
-// ---------------------------------------------------------------------------
-// POST /api/products (admin)
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// POST /api/products
+// Admin product creation
+// -----------------------------------------------------------------------------
+
 const createProduct = async (req, res, next) => {
+  let uploadedImages = [];
+
   try {
     const {
       name,
@@ -255,12 +327,10 @@ const createProduct = async (req, res, next) => {
       category,
       categories,
       priceMinor,
-      images,
       stock,
       sku,
     } = req.body;
 
-    // Collect the primary category and any extra categories.
     const collected = collectCategoryIds(category, categories);
 
     if (collected.error) {
@@ -272,13 +342,14 @@ const createProduct = async (req, res, next) => {
 
     const categoryIds = collected.ids;
 
-    // Check required fields. At least one category is required.
+    // Validate required fields.
     if (
       !name?.trim() ||
       !slug?.trim() ||
       !description?.trim() ||
       categoryIds.length === 0 ||
       priceMinor === undefined ||
+      priceMinor === '' ||
       !sku?.trim()
     ) {
       return res.status(400).json({
@@ -287,26 +358,50 @@ const createProduct = async (req, res, next) => {
       });
     }
 
-    // Every selected category must exist and be active.
-    if (!(await allCategoriesActive(categoryIds))) {
+    const parsedPrice = Number(priceMinor);
+    const parsedStock = stock === undefined || stock === ''
+      ? 0
+      : Number(stock);
+
+    if (
+      !Number.isSafeInteger(parsedPrice) ||
+      parsedPrice < 0
+    ) {
       return res.status(400).json({
         status: 'error',
-        message:
-          'One or more selected categories do not exist or are inactive.',
+        message: 'priceMinor must be a valid non-negative integer.',
       });
     }
 
-    // The primary category is `category` if supplied,
-    // otherwise the first ID in `categories`.
+    if (
+      !Number.isSafeInteger(parsedStock) ||
+      parsedStock < 0
+    ) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'stock must be a valid non-negative integer.',
+      });
+    }
+
+    if (!(await allCategoriesActive(categoryIds))) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'One or more selected categories do not exist or are inactive.',
+      });
+    }
+
+    // Upload images only after validating the product fields and categories.
+    uploadedImages = await uploadProductImages(req.files || []);
+
     const product = await Product.create({
       name: name.trim(),
       slug: slug.trim().toLowerCase(),
       description: description.trim(),
       category: categoryIds[0],
       categories: categoryIds,
-      priceMinor,
-      images: images || [],
-      stock: stock ?? 0,
+      priceMinor: parsedPrice,
+      images: uploadedImages,
+      stock: parsedStock,
       sku: sku.trim().toUpperCase(),
     });
 
@@ -318,6 +413,9 @@ const createProduct = async (req, res, next) => {
       data: product,
     });
   } catch (error) {
+    // If saving the product fails, remove its newly uploaded images.
+    await deleteProductImages(uploadedImages);
+
     if (error.code === 11000) {
       return res.status(409).json({
         status: 'error',
@@ -336,10 +434,14 @@ const createProduct = async (req, res, next) => {
   }
 };
 
-// ---------------------------------------------------------------------------
-// PATCH /api/products/:id (admin)
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// PATCH /api/products/:id
+// Admin product update
+// -----------------------------------------------------------------------------
+
 const updateProduct = async (req, res, next) => {
+  let uploadedImages = [];
+
   try {
     const allowedFields = [
       'name',
@@ -348,28 +450,18 @@ const updateProduct = async (req, res, next) => {
       'category',
       'categories',
       'priceMinor',
-      'images',
       'stock',
       'sku',
     ];
 
     const updates = {};
 
-    // Only allow fields we intend to update.
     for (const field of allowedFields) {
       if (Object.hasOwn(req.body, field)) {
         updates[field] = req.body[field];
       }
     }
 
-    if (Object.keys(updates).length === 0) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Provide at least one valid field to update.',
-      });
-    }
-
-    // Normalize selected string fields.
     if (typeof updates.name === 'string') {
       updates.name = updates.name.trim();
     }
@@ -386,10 +478,36 @@ const updateProduct = async (req, res, next) => {
       updates.sku = updates.sku.trim().toUpperCase();
     }
 
-    // Handle category changes.
+    if (updates.priceMinor !== undefined) {
+      updates.priceMinor = Number(updates.priceMinor);
+
+      if (
+        !Number.isSafeInteger(updates.priceMinor) ||
+        updates.priceMinor < 0
+      ) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'priceMinor must be a valid non-negative integer.',
+        });
+      }
+    }
+
+    if (updates.stock !== undefined) {
+      updates.stock = Number(updates.stock);
+
+      if (
+        !Number.isSafeInteger(updates.stock) ||
+        updates.stock < 0
+      ) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'stock must be a valid non-negative integer.',
+        });
+      }
+    }
+
     const hasCategory = updates.category !== undefined;
     const hasCategories = updates.categories !== undefined;
-    let addToSet;
 
     if (hasCategory || hasCategories) {
       const collected = collectCategoryIds(
@@ -416,24 +534,18 @@ const updateProduct = async (req, res, next) => {
       if (!(await allCategoriesActive(categoryIds))) {
         return res.status(400).json({
           status: 'error',
-          message:
-            'One or more selected categories do not exist or are inactive.',
+          message: 'One or more selected categories do not exist or are inactive.',
         });
       }
 
       if (hasCategories) {
-        // Replace the full category list.
         updates.categories = categoryIds;
 
         if (hasCategory) {
-          // The supplied primary category is first in the list.
           updates.category = categoryIds[0];
         } else {
-          // Keep the existing primary category if it is still in the list,
-          // otherwise use the first category from the new list.
-          const existing = await Product.findById(req.params.id).select(
-            'category'
-          );
+          const existing = await Product.findById(req.params.id)
+            .select('category');
 
           if (!existing) {
             return res.status(404).json({
@@ -442,22 +554,71 @@ const updateProduct = async (req, res, next) => {
             });
           }
 
-          updates.category = categoryIds.includes(String(existing.category))
+          updates.category = categoryIds.includes(
+            String(existing.category)
+          )
             ? existing.category
             : categoryIds[0];
         }
       } else {
-        // Only the primary category changed: set it and make sure
-        // it is also part of the categories list.
+        // When only the primary category changes, preserve the other categories.
         updates.category = categoryIds[0];
-        addToSet = { categories: categoryIds[0] };
+
+        const existing = await Product.findById(req.params.id)
+          .select('categories');
+
+        if (!existing) {
+          return res.status(404).json({
+            status: 'error',
+            message: 'Product not found.',
+          });
+        }
+
+        const existingCategoryIds = (existing.categories || []).map(
+          (id) => String(id)
+        );
+
+        updates.categories = [
+          ...new Set([
+            ...existingCategoryIds,
+            ...categoryIds,
+          ]),
+        ];
       }
     }
 
-    const update = { $set: updates };
+    const existingProduct = await Product.findById(req.params.id);
 
-    if (addToSet) {
-      update.$addToSet = addToSet;
+    if (!existingProduct) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Product not found.',
+      });
+    }
+
+    // Upload any newly selected images.
+    uploadedImages = await uploadProductImages(req.files || []);
+
+    const update = {};
+
+    if (Object.keys(updates).length > 0) {
+      update.$set = updates;
+    }
+
+    // Append new images without replacing existing images.
+    if (uploadedImages.length > 0) {
+      update.$push = {
+        images: {
+          $each: uploadedImages,
+        },
+      };
+    }
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'No valid product fields or images were provided.',
+      });
     }
 
     const product = await Product.findByIdAndUpdate(
@@ -470,6 +631,8 @@ const updateProduct = async (req, res, next) => {
     ).populate(CATEGORY_POPULATE);
 
     if (!product) {
+      await deleteProductImages(uploadedImages);
+
       return res.status(404).json({
         status: 'error',
         message: 'Product not found.',
@@ -482,6 +645,9 @@ const updateProduct = async (req, res, next) => {
       data: product,
     });
   } catch (error) {
+    // Remove only the images uploaded during this failed update.
+    await deleteProductImages(uploadedImages);
+
     if (error.name === 'CastError') {
       return res.status(400).json({
         status: 'error',
@@ -507,9 +673,11 @@ const updateProduct = async (req, res, next) => {
   }
 };
 
-// ---------------------------------------------------------------------------
-// DELETE /api/products/:id (admin) - deactivates instead of deleting
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// DELETE /api/products/:id
+// Admin product deactivation (soft delete)
+// -----------------------------------------------------------------------------
+
 const deleteProduct = async (req, res, next) => {
   try {
     const product = await Product.findByIdAndUpdate(
@@ -542,22 +710,28 @@ const deleteProduct = async (req, res, next) => {
   }
 };
 
+// -----------------------------------------------------------------------------
+// GET /api/products/admin
+// Admin product listing
+// -----------------------------------------------------------------------------
 
 const getAdminProducts = async (req, res, next) => {
   try {
-    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const page = Math.max(
+      1,
+      Number.parseInt(req.query.page, 10) || 1
+    );
+
     const requestedLimit =
       Number.parseInt(req.query.limit, 10) || 10;
+
     const limit = Math.min(50, Math.max(1, requestedLimit));
 
     const filter = {};
 
     // Search by product name or SKU.
     if (req.query.search?.trim()) {
-      const escapedSearch = req.query.search
-        .trim()
-        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
+      const escapedSearch = escapeRegex(req.query.search.trim());
       const searchRegex = new RegExp(escapedSearch, 'i');
 
       filter.$or = [
@@ -566,7 +740,7 @@ const getAdminProducts = async (req, res, next) => {
       ];
     }
 
-    // Filter by active status. "all" leaves status unrestricted.
+    // Filter by active status.
     const status = req.query.status || 'active';
 
     if (status === 'active') {
@@ -580,7 +754,7 @@ const getAdminProducts = async (req, res, next) => {
       });
     }
 
-    // Accept one category slug or several comma-separated slugs.
+    // Filter by one or more category slugs.
     const categoryInput = [
       ...(req.query.category ? [req.query.category] : []),
       ...(req.query.categories
@@ -608,7 +782,6 @@ const getAdminProducts = async (req, res, next) => {
         (category) => category._id
       );
 
-      // Match either the primary category or an additional category.
       filter.$and = [
         ...(filter.$and || []),
         {
@@ -620,13 +793,14 @@ const getAdminProducts = async (req, res, next) => {
       ];
     }
 
-    const total = await Product.countDocuments(filter);
-
-    const products = await Product.find(filter)
-      .populate(CATEGORY_POPULATE)
-      .sort({ createdAt: -1, _id: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit);
+    const [total, products] = await Promise.all([
+      Product.countDocuments(filter),
+      Product.find(filter)
+        .populate(CATEGORY_POPULATE)
+        .sort({ createdAt: -1, _id: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+    ]);
 
     return res.status(200).json({
       status: 'success',
@@ -644,6 +818,9 @@ const getAdminProducts = async (req, res, next) => {
   }
 };
 
+// -----------------------------------------------------------------------------
+// Exports
+// -----------------------------------------------------------------------------
 
 module.exports = {
   getProducts,
@@ -653,5 +830,4 @@ module.exports = {
   updateProduct,
   deleteProduct,
   getAdminProducts,
-  
 };

@@ -19,6 +19,7 @@ import {
   useUpdateCartItemQuantityMutation,
   useRemoveCartItemMutation,
 } from '../services/api.js'
+import getProductImageUrl from '../utils/getProductImageUrl';
 
 function formatPrice(priceMinor = 0) {
   return `KSh ${(priceMinor / 100).toLocaleString('en-KE', {
@@ -118,7 +119,7 @@ export default function CartPage() {
             {items.map((item) => {
               const product = item.product
               const productId = product?._id ?? item.product
-              const image = product?.images?.[0]
+              const image = getProductImageUrl(product?.images?.[0])
               const unavailable =
                 !product || product.stock < 1 || !product.isActive
 

@@ -7,12 +7,12 @@ import {
   Card,
   CardContent,
   Chip,
-  Stack,
   Typography,
 } from '@mui/material'
 import AddShoppingCartIcon from '@mui/icons-material/AddShoppingCart'
 import { Link } from 'react-router-dom'
 import { useAddCartItemMutation } from '../services/api.js'
+import getProductImageUrl from '../utils/getProductImageUrl'
 
 function formatPrice(priceMinor) {
   return `KSh ${(priceMinor / 100).toLocaleString('en-KE', {
@@ -26,11 +26,23 @@ export default function ProductCard({ product }) {
   const [message, setMessage] = useState(null)
   const [imageFailed, setImageFailed] = useState(false)
 
-  const imageUrl = product.images?.[0]
+  const imageUrl = getProductImageUrl(product.images?.[0])
 
+  // Reset image error when the product image changes.
   useEffect(() => {
     setImageFailed(false)
   }, [imageUrl])
+
+  // Automatically clear notifications after 3 seconds.
+  useEffect(() => {
+    if (!message) return
+
+    const timer = setTimeout(() => {
+      setMessage(null)
+    }, 3000)
+
+    return () => clearTimeout(timer)
+  }, [message])
 
   const stock = Number(product.stock) || 0
   const isOutOfStock = stock < 1 || !product.isActive
@@ -58,23 +70,6 @@ export default function ProductCard({ product }) {
     }
   }
 
-// ... inside your component:
-
-useEffect(() => {
-  // If there is no message, do nothing
-  if (!message) return
-
-  // Set a timer to clear the message after 3 seconds (3000ms)
-  const timer = setTimeout(() => {
-    setMessage(null)
-  }, 1000)
-
-  // CRITICAL: Clean up the timer if the component unmounts 
-  // or if 'message' changes again before 3 seconds pass
-  return () => clearTimeout(timer)
-}, [message])
-
-
   return (
     <Card
       variant="outlined"
@@ -84,7 +79,8 @@ useEffect(() => {
         flexDirection: 'column',
         borderRadius: 2.5,
         overflow: 'hidden',
-        transition: 'border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease',
+        transition:
+          'border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease',
         '&:hover': {
           borderColor: 'primary.main',
           boxShadow: 3,
@@ -152,7 +148,9 @@ useEffect(() => {
             top: 10,
             left: 10,
             maxWidth: 'calc(100% - 20px)',
-            bgcolor: isOutOfStock ? 'action.disabledBackground' : 'success.light',
+            bgcolor: isOutOfStock
+              ? 'action.disabledBackground'
+              : 'success.light',
             color: isOutOfStock ? 'text.secondary' : 'success.dark',
             fontWeight: 600,
           }}
@@ -170,11 +168,7 @@ useEffect(() => {
         }}
       >
         {product.category?.name && (
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            noWrap
-          >
+          <Typography variant="caption" color="text.secondary" noWrap>
             {product.category.name}
           </Typography>
         )}

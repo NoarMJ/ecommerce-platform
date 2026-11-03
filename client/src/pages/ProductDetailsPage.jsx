@@ -23,6 +23,8 @@ import {
   useAddCartItemMutation,
   useGetProductBySlugQuery,
 } from '../services/api.js'
+import getProductImageUrl from '../utils/getProductImageUrl';
+
 
 function formatPrice(priceMinor) {
   return `KSh ${(priceMinor / 100).toLocaleString('en-KE', {
@@ -55,8 +57,9 @@ export default function ProductDetailsPage() {
     setMessage(null)
   }, [slug])
 
-  const images = product?.images ?? []
-  const selectedImage = images[selectedImageIndex] ?? images[0]
+const images = (product?.images ?? [])
+  .map(getProductImageUrl)
+  .filter(Boolean);  const selectedImage = images[selectedImageIndex] ?? images[0]
 
   const stock = Number(product?.stock) || 0
   const outOfStock = stock < 1 || !product?.isActive
