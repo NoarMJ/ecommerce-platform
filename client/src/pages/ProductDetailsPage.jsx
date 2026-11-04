@@ -24,6 +24,8 @@ import {
   useGetProductBySlugQuery,
 } from '../services/api.js'
 import getProductImageUrl from '../utils/getProductImageUrl';
+import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew'
+import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos'
 
 
 function formatPrice(priceMinor) {
@@ -59,7 +61,8 @@ export default function ProductDetailsPage() {
 
 const images = (product?.images ?? [])
   .map(getProductImageUrl)
-  .filter(Boolean);  const selectedImage = images[selectedImageIndex] ?? images[0]
+  .filter(Boolean)
+   const selectedImage = images[selectedImageIndex] ?? images[0]
 
   const stock = Number(product?.stock) || 0
   const outOfStock = stock < 1 || !product?.isActive
@@ -222,55 +225,64 @@ const images = (product?.images ?? [])
             </Box>
 
             {/* Clickable image thumbnails */}
-            {images.length > 1 && (
-              <Stack
-                direction="row"
-                spacing={1.5}
-                sx={{
-                  mt: 2,
-                  overflowX: 'auto',
-                  pb: 1,
-                }}
-                aria-label="Product image gallery"
-              >
-                {images.map((image, index) => (
-                  <ButtonBase
-                    key={`${image}-${index}`}
-                    onClick={() => setSelectedImageIndex(index)}
-                    aria-label={`View product image ${index + 1}`}
-                    aria-pressed={selectedImageIndex === index}
+            
+              {images.length > 1 && (
+                <Chip
+                  label={`${selectedImageIndex + 1} / ${images.length}`}
+                  size="small"
+                  sx={{
+                    position: 'absolute',
+                    bottom: 14,
+                    right: 14,
+                    bgcolor: 'background.paper',
+                    fontWeight: 700,
+                  }}
+                />
+              )}
+
+              {images.length > 1 &&
+                <>
+                  <IconButton
+                    aria-label="Previous image"
+                    onClick={() =>
+                      setSelectedImageIndex((current) =>
+                        (current - 1 + images.length) % images.length
+                      )
+                    }
                     sx={{
-                      flex: '0 0 auto',
-                      width: { xs: 68, sm: 84 },
-                      height: { xs: 68, sm: 84 },
-                      p: 0.5,
-                      border: 2,
-                      borderColor:
-                        selectedImageIndex === index
-                          ? 'primary.main'
-                          : 'divider',
-                      borderRadius: 2,
-                      overflow: 'hidden',
-                      bgcolor: 'action.hover',
-                      '&:hover': {
-                        borderColor: 'primary.main',
-                      },
+                      position: 'absolute',
+                      left: 12,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      bgcolor: 'background.paper',
+                      boxShadow: 2,
+                      '&:hover': { bgcolor: 'background.paper' },
                     }}
                   >
-                    <Box
-                      component="img"
-                      src={image}
-                      alt={`${product.name}, image ${index + 1}`}
-                      sx={{
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'contain',
-                      }}
-                    />
-                  </ButtonBase>
-                ))}
-              </Stack>
-            )}
+                    <ArrowBackIosNewIcon fontSize="small" />
+                  </IconButton>
+
+                  <IconButton
+                    aria-label="Next image"
+                    onClick={() =>
+                      setSelectedImageIndex((current) =>
+                        (current + 1) % images.length
+                      )
+                    }
+                    sx={{
+                      position: 'absolute',
+                      right: 12,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      bgcolor: 'background.paper',
+                      boxShadow: 2,
+                      '&:hover': { bgcolor: 'background.paper' },
+                    }}
+                  >
+                    <ArrowForwardIosIcon fontSize="small" />
+                  </IconButton>
+                </>
+              }
           </Grid>
 
           {/* Product information and purchasing controls */}

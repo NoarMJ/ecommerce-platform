@@ -172,10 +172,10 @@ createProduct: builder.mutation({
 }),
 
 updateProduct: builder.mutation({
-  query: ({ id, ...productData }) => ({
+  query: ({ id, formData }) => ({
     url: `/products/${id}`,
     method: 'PATCH',
-    body: productData,
+    body: formData,
   }),
   invalidatesTags: ['Product'],
 }),

@@ -888,11 +888,21 @@ export default function AdminProducts({ user }) {
         payload,
         editForm.imageFiles,
       )
+console.log(
+  'Update FormData:',
+  [...formData.entries()].map(([key, value]) => [
+    key,
+    value instanceof File ? value.name : value,
+  ])
+)
 
       await updateProduct({
         id: editingProduct._id,
         formData,
       }).unwrap()
+
+      console.log('Product ID:', editingProduct._id)
+
 
       setEditingProduct(null)
       setEditForm({ ...EMPTY_FORM, categories: [], imageFiles: [], existingImages: [] })
