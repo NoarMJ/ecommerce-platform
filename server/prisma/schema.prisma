@@ -1,0 +1,229 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Category {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(100)
+  slug        String   @unique
+  description String   @default("")
+  image       String   @default("")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  primaryProducts Product[] @relation("PrimaryCategory")
+  products        Product[] @relation("ExtraCategories")
+
+  @@map("categories")
+}
+
+enum Role {
+  customer
+  admin
+}
+
+model User {
+  id             String   @id @default(uuid()) @db.Uuid
+  firstName      String   @db.VarChar(50)
+  lastName       String   @db.VarChar(50)
+  email          String   @unique
+  passwordHash   String
+  phoneNumber    String   @default("")
+  role           Role     @default(customer)
+  permissions    String[] @default([])
+  isPrimaryAdmin Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  cart          Cart?
+  orders        Order[]
+  statusChanges OrderStatusHistory[]
+  payments      Payment[]
+
+  @@map("users")
+}
+
+model Product {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(150)
+  slug        String   @unique
+  description String
+  priceMinor  Int
+  images      String[] @default([])
+  stock       Int      @default(0)
+  sku         String   @unique
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  categoryId String   @db.Uuid
+  category   Category @relation("PrimaryCategory", fields: [categoryId], references: [id], onDelete: Restrict)
+
+  categories Category[] @relation("ExtraCategories")
+
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+
+  @@index([categoryId])
+  @@map("products")
+}
+
+model Cart {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String?   @unique @db.Uuid
+  guestTokenHash String?   @unique
+  expiresAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user  User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items CartItem[]
+
+  @@index([expiresAt])
+  @@map("carts")
+}
+
+model CartItem {
+  id        String @id @default(uuid()) @db.Uuid
+  cartId    String @db.Uuid
+  productId String @db.Uuid
+  quantity  Int    @default(1)
+
+  cart    Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([cartId, productId])
+  @@map("cart_items")
+}
+
+enum OrderStatus {
+  pending
+  processing
+  shipped
+  delivered
+  cancelled
+}
+
+enum OrderPaymentStatus {
+  pending
+  paid
+  failed
+  refunded
+}
+
+enum PaymentMethod {
+  cash_on_delivery
+  mpesa
+}
+
+model Order {
+  id             String @id @default(uuid()) @db.Uuid
+  orderNumber    String @unique
+  idempotencyKey String
+  userId         String @db.Uuid
+
+  shipFullName     String
+  shipPhone        String
+  shipAddressLine1 String
+  shipAddressLine2 String?
+  shipCity         String
+  shipCounty       String
+  shipPostalCode   String?
+
+  customerNote  String?            @db.VarChar(500)
+  paymentMethod PaymentMethod
+  paymentStatus OrderPaymentStatus @default(pending)
+  orderStatus   OrderStatus        @default(pending)
+
+  subtotalMinor    Int
+  shippingFeeMinor Int @default(0)
+  totalMinor       Int
+
+  cancelledAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  items         OrderItem[]
+  statusHistory OrderStatusHistory[]
+  payments      Payment[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId])
+  @@map("orders")
+}
+
+model OrderItem {
+  id             String  @id @default(uuid()) @db.Uuid
+  orderId        String  @db.Uuid
+  productId      String  @db.Uuid
+  name           String
+  sku            String?
+  image          String?
+  unitPriceMinor Int
+  quantity       Int
+  lineTotalMinor Int
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model OrderStatusHistory {
+  id          String      @id @default(uuid()) @db.Uuid
+  orderId     String      @db.Uuid
+  status      OrderStatus
+  changedAt   DateTime    @default(now())
+  changedById String?     @db.Uuid
+
+  order     Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  changedBy User? @relation(fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@map("order_status_history")
+}
+
+enum PaymentStatus {
+  initiated
+  succeeded
+  failed
+  cancelled
+  needs_review
+}
+
+model Payment {
+  id          String        @id @default(uuid()) @db.Uuid
+  orderId     String        @db.Uuid
+  userId      String        @db.Uuid
+  method      PaymentMethod @default(mpesa)
+  phone       String
+  amountMinor Int
+  status      PaymentStatus @default(initiated)
+
+  merchantRequestId  String?
+  checkoutRequestId  String? @unique
+  mpesaReceiptNumber String? @unique
+
+  resultCode  Int?
+  resultDesc  String?
+  rawCallback Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@map("payments")
+}
