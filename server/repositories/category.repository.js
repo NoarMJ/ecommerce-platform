@@ -12,6 +12,9 @@ const findById = (id) =>
 const findBySlug = (slug) =>
   prisma.category.findUnique({ where: { slug } });
 
+const countActiveByIds = (ids) =>
+    prisma.category.count({ where :{ id: { in: ids} , isActive: true }});
+
 const create = (data) =>
   prisma.category.create({ data });
 
@@ -21,4 +24,4 @@ const update = (id, data) =>
 const remove = (id) =>
   prisma.category.delete({ where: { id } });
 
-module.exports = { findAll, findById, findBySlug, create, update, remove };
+module.exports = { findAll, findById, findBySlug, countActiveByIds, create, update, remove };
