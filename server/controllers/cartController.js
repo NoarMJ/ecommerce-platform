@@ -1,84 +1,48 @@
-
-const Cart = require('../models/cart');
-const Product = require('../models/product');
+const cartService = require('../services/cart.service');
+const { isUuid } = require('../utils/ids');
 const {
-  getOrCreateGuestCart,
-  addItemToCart,
-  updateCartItem,
-  removeCartItem,
-  clearCart,
-} = require('../services/cartService');
+  GUEST_CART_COOKIE,
+  guestCartCookieOptions,
+} = require('../config/cookies');
+
+const sendError = (error, res, next) => {
+  if (error.isAppError) {
+    return res.status(error.statusCode).json({
+      message: error.message,
+    });
+  }
+  return next(error);
+};
+
+// Who is asking? Old sessions hold Mongo ids, so only UUIDs count as logged in.
+const getIdentity = (req) => ({
+  userId: isUuid(req.session?.userId) ? req.session.userId : null,
+  guestToken: req.cookies?.[GUEST_CART_COOKIE],
+});
+
+// Temporary bridge: the frontend still reads product._id
+const toResponse = (view) => ({
+  items: view.items.map((item) => ({
+    ...item,
+    product: { ...item.product, _id: item.product.id },
+  })),
+  totalMinor: view.totalMinor,
+});
 
 // GET /api/cart
-// Return the current user's cart or the visitor's guest cart.
 async function getCart(req, res, next) {
   try {
-    let cart;
+    const view = await cartService.getCart(getIdentity(req));
 
-    if (req.session.userId) {
-      // Logged-in visitors use the cart linked to their account.
-      cart = await Cart.findOne({
-        user: req.session.userId,
-      });
-    } else {
-      // Guests are identified using a token stored in a cookie.
-      const guestToken = req.cookies?.guestCartToken;
-
-      const result = await getOrCreateGuestCart(guestToken);
-      cart = result.cart;
-
-      // Only send a new cookie when a new guest token was created.
-      if (result.guestToken) {
-        res.cookie('guestCartToken', result.guestToken, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
-          maxAge: 30 * 24 * 60 * 60 * 1000,
-          path: '/',
-        });
-      }
-    }
-
-    if (!cart) {
-      return res.status(200).json({
-        items: [],
-        totalMinor: 0,
-      });
-    }
-
-    // Load current product details for the cart's items.
-    await cart.populate({
-      path: 'items.product',
-      select: 'name slug priceMinor images stock isActive',
-    });
-
-    // Hide products that no longer exist or are inactive.
-    const items = cart.items
-      .filter((item) => item.product && item.product.isActive)
-      .map((item) => ({
-        product: item.product,
-        quantity: item.quantity,
-        lineTotalMinor: item.product.priceMinor * item.quantity,
-      }));
-
-    const totalMinor = items.reduce(
-      (total, item) => total + item.lineTotalMinor,
-      0
-    );
-
-    return res.status(200).json({
-      items,
-      totalMinor,
-    });
+    return res.status(200).json(toResponse(view));
   } catch (error) {
-    next(error);
+    return sendError(error, res, next);
   }
 }
 
-
+// POST /api/cart/items
 async function addCartItem(req, res, next) {
   try {
-    // The client must provide a product ID and quantity.
     const { productId, quantity } = req.body;
 
     if (
@@ -87,78 +51,34 @@ async function addCartItem(req, res, next) {
       quantity < 1
     ) {
       return res.status(400).json({
-        message:
-          'Provide a valid productId and a positive integer quantity.',
+        message: 'Provide a valid productId and a positive integer quantity.',
       });
     }
 
-    let cart;
-
-    if (req.session.userId) {
-      // Find the cart belonging to the logged-in customer.
-      cart = await Cart.findOne({
-        user: req.session.userId,
-      });
-
-      // Create an account cart if one does not exist.
-      if (!cart) {
-        cart = await Cart.create({
-          user: req.session.userId,
-          items: [],
-        });
-      }
-    } else {
-      // Find or create the guest cart using its cookie.
-      const guestToken = req.cookies?.guestCartToken;
-      const result = await getOrCreateGuestCart(guestToken);
-
-      cart = result.cart;
-
-      // Send the cookie only when a new guest token is created.
-      if (result.guestToken) {
-        res.cookie('guestCartToken', result.guestToken, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
-          maxAge: 30 * 24 * 60 * 60 * 1000,
-          path: '/',
-        });
-      }
-    }
-
-    // The service enforces product, quantity, and stock rules.
-    await addItemToCart(cart, productId, quantity);
-
-    // Recalculate the response using current database prices.
-    const items = cart.items
-      .filter((item) => item.product && item.product.isActive)
-      .map((item) => ({
-        product: item.product,
-        quantity: item.quantity,
-        lineTotalMinor:
-          item.product.priceMinor * item.quantity,
-      }));
-
-    const totalMinor = items.reduce(
-      (total, item) => total + item.lineTotalMinor,
-      0
+    const { view, newGuestToken } = await cartService.addItem(
+      getIdentity(req),
+      productId,
+      quantity
     );
+
+    // Only send a cookie when a new guest cart was created.
+    if (newGuestToken) {
+      res.cookie(GUEST_CART_COOKIE, newGuestToken, guestCartCookieOptions);
+    }
 
     return res.status(200).json({
       message: 'Product added to cart successfully.',
-      items,
-      totalMinor,
+      ...toResponse(view),
     });
   } catch (error) {
-    next(error);
+    return sendError(error, res, next);
   }
 }
 
-
+// PATCH /api/cart/items/:productId
 async function updateCartItemQuantity(req, res, next) {
   try {
     const { quantity } = req.body;
-    const { productId } = req.params;
 
     if (!Number.isInteger(quantity) || quantity < 1) {
       return res.status(400).json({
@@ -166,177 +86,54 @@ async function updateCartItemQuantity(req, res, next) {
       });
     }
 
-    let cart;
-
-    if (req.session.userId) {
-      cart = await Cart.findOne({
-        user: req.session.userId,
-      });
-
-      if (!cart) {
-        return res.status(404).json({
-          message: 'Cart not found.',
-        });
-      }
-    } else {
-      const guestToken = req.cookies?.guestCartToken;
-      const result = await getOrCreateGuestCart(guestToken);
-
-      cart = result.cart;
-
-      if (result.guestToken) {
-        res.cookie('guestCartToken', result.guestToken, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
-          maxAge: 30 * 24 * 60 * 60 * 1000,
-          path: '/',
-        });
-      }
-    }
-
-    await updateCartItem(cart, productId, quantity);
-
-    const items = cart.items
-      .filter(
-        (item) => item.product && item.product.isActive
-      )
-      .map((item) => ({
-        product: item.product,
-        quantity: item.quantity,
-        lineTotalMinor:
-          item.product.priceMinor * item.quantity,
-      }));
-
-    const totalMinor = items.reduce(
-      (total, item) => total + item.lineTotalMinor,
-      0
+    const view = await cartService.updateItem(
+      getIdentity(req),
+      req.params.productId,
+      quantity
     );
 
     return res.status(200).json({
       message: 'Cart item quantity updated successfully.',
-      items,
-      totalMinor,
+      ...toResponse(view),
     });
   } catch (error) {
-    next(error);
+    return sendError(error, res, next);
   }
 }
 
-
-
+// DELETE /api/cart/items/:productId
 async function removeCartItemFromCart(req, res, next) {
-    console.log('URL : ' , req.originalUrl);
-    console.log('params' , req.params);
   try {
-    const { productId } = req.params;
-    let cart;
-
-    if (req.session.userId) {
-      cart = await Cart.findOne({
-        user: req.session.userId,
-      });
-
-      if (!cart) {
-        return res.status(404).json({
-          message: 'Cart not found.',
-        });
-      }
-    } else {
-      const guestToken = req.cookies?.guestCartToken;
-
-      const result = await getOrCreateGuestCart(guestToken);
-      cart = result.cart;
-
-      if (result.guestToken) {
-        res.cookie('guestCartToken', result.guestToken, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
-          maxAge: 30 * 24 * 60 * 60 * 1000,
-          path: '/',
-        });
-      }
-    }
-        console.log('Delete productID ', req.params.productId);
-    console.log(' delete product id length' ,  req.params.productId?.length);
-
-    await removeCartItem(cart, productId);
-    
-
-
-    const items = cart.items
-      .filter(
-        (item) => item.product && item.product.isActive
-      )
-      .map((item) => ({
-        product: item.product,
-        quantity: item.quantity,
-        lineTotalMinor:
-          item.product.priceMinor * item.quantity,
-      }));
-
-    const totalMinor = items.reduce(
-      (total, item) => total + item.lineTotalMinor,
-      0
+    const view = await cartService.removeItem(
+      getIdentity(req),
+      req.params.productId
     );
 
     return res.status(200).json({
       message: 'Cart item removed successfully.',
-      items,
-      totalMinor,
+      ...toResponse(view),
     });
   } catch (error) {
-    next(error);
+    return sendError(error, res, next);
   }
 }
 
-async function clearCartContents ( req, res, next) {
-    try {
-        let cart;
+// DELETE /api/cart
+async function clearCartContents(req, res, next) {
+  try {
+    const hadCart = await cartService.clearCart(getIdentity(req));
 
-        if (req.session.userId) {
-            cart = await Cart.findOne({
-                user: req.session.userId,
-            });
-
-        if (!cart) {
-            return res.status(200).json({
-                message: " the cart is already empty ",
-                items: [],
-                totalMinor: 0,
-            });
-        }
-        else{ 
-            const guestToken = req.cookies?.guestCartToken;
-      const result = await getOrCreateGuestCart(guestToken);
-
-      cart = result.cart;
-
-      if (result.guestToken) {
-        res.cookie('guestCartToken', result.guestToken, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
-          maxAge: 30 * 24 * 60 * 60 * 1000,
-          path: '/',
-        });
-        }
-        }
-
-        await clearCart(cart);
-
-        return res.status(200).json({
-            message: "Cart is cleared succesfully",
-            items:[],
-            totalMinor: 0,
-        });
-        } 
-    } catch (error) {
-        next(error);
-    }
+    return res.status(200).json({
+      message: hadCart
+        ? 'Cart is cleared successfully.'
+        : 'The cart is already empty.',
+      items: [],
+      totalMinor: 0,
+    });
+  } catch (error) {
+    return sendError(error, res, next);
+  }
 }
-
 
 module.exports = {
   getCart,

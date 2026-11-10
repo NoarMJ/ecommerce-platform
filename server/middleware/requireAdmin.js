@@ -1,5 +1,4 @@
-
-const User = require('../models/user');
+const { getActiveUser } = require('../services/auth.service');
 
 const requireAdmin = async (req, res, next) => {
   try {
@@ -10,9 +9,9 @@ const requireAdmin = async (req, res, next) => {
       });
     }
 
-    const user = await User.findById(req.session.userId);
+    const user = await getActiveUser(req.session.userId);
 
-    if (!user || !user.isActive) {
+    if (!user) {
       return res.status(401).json({
         status: 'error',
         message: 'Your session is no longer valid.',

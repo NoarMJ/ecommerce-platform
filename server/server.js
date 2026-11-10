@@ -19,6 +19,8 @@ const { mongo } = require('mongoose');
 const adminRoutes =require('./routes/adminRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 
+const { startCartCleanup } = require('./jobs/cleanupExpiredCarts');
+
 
 const paymentRoutes = require('./routes/paymentRoutes');
 
@@ -98,6 +100,7 @@ const startServer = async () => {
 
     app.listen(PORT, () => {
       console.log(`Server is running on http://localhost:${PORT}`);
+      startCartCleanup(); // Start the cart cleanup job after the server starts
     });
   } catch (error) {
     console.error('Failed to start server:', error.message);
