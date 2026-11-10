@@ -177,6 +177,8 @@ model OrderItem {
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
 
+  position Int @default(0)
+
   @@index([orderId])
   @@map("order_items")
 }

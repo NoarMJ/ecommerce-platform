@@ -115,6 +115,9 @@ const update = (id, { categoryIds, ...data }) =>
     include: includeCategories,
   });
 
+  const findByIds = (ids) =>
+  prisma.product.findMany({ where: { id: { in: ids } } });
+
 module.exports = {
   findPage,
   findById,
@@ -123,4 +126,5 @@ module.exports = {
   existsActiveInCategory,
   create,
   update,
+  findByIds,
 };
