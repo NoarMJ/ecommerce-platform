@@ -1,34 +1,41 @@
 
 require('dotenv').config();
 
+const http = require('http');
 const express = require('express');
-const connectDB = require('./config/db');
-const session = require('express-session');
+// const connectDB = require('./config/db');
+// const session = require('express-session');
 const cookieParser = require('cookie-parser');
 const cors = require ('cors');
 
+const prisma = require('./config/prisma');
 
-
-const MongoStore = require('connect-mongo').default;
+// const MongoStore = require('connect-mongo').default;
 const productRoutes = require('./routes/productRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const authRoutes = require('./routes/authRoutes');
 const cartRoutes = require('./routes/cartRoutes');
 const errorHandler = require('./middleware/errorHandler');
-const { mongo } = require('mongoose');
+// const { mongo } = require('mongoose');
 const adminRoutes =require('./routes/adminRoutes');
 const orderRoutes = require('./routes/orderRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
+
+
+const { attachSocket } = require('./socket');
+
 
 const { startCartCleanup } = require('./jobs/cleanupExpiredCarts');
 
 
-const paymentRoutes = require('./routes/paymentRoutes');
 
 
 const app = express();
 
-  app.set("trust proxy", 1);
 const PORT = process.env.PORT || 3002;
+
+app.set("trust proxy", 1);
+
 
   app.use(cors({
     origin: process.env.CLIENT_URL,
@@ -47,27 +54,27 @@ app.use(express.json());
 // middleware for cookie parser
 app.use(cookieParser());
 
-// Middleware
-app.use(
-    session({
-        name: 'ecommerce.sid',
-        secret: process.env.SESSION_SECRET,
-        resave: false,
-        saveUninitialized: false,
+// // Middleware
+// app.use(
+//     session({
+//         name: 'ecommerce.sid',
+//         secret: process.env.SESSION_SECRET,
+//         resave: false,
+//         saveUninitialized: false,
 
-        store: MongoStore.create({
-            mongoUrl: process.env.MONGODB_URI,
-            collectionName: 'sessions',
-        }),
+//         store: MongoStore.create({
+//             mongoUrl: process.env.MONGODB_URI,
+//             collectionName: 'sessions',
+//         }),
 
-         cookie: {
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    httpOnly: true,
-    maxAge: 1000 * 60 * 60 * 24, // 1 day
-  },
-    })
-);
+//          cookie: {
+//     secure: process.env.NODE_ENV === "production",
+//     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+//     httpOnly: true,
+//     maxAge: 1000 * 60 * 60 * 24, // 1 day
+//   },
+//     })
+// );
 
  
 
@@ -93,19 +100,26 @@ app.use('/api/payments', paymentRoutes);
 
 app.use(errorHandler);
 
-// Connect to MongoDB before starting the API server.
+// socket io neeed sthe raw http server
+const server = http.createServer(app);
+attachSocket(server);
 const startServer = async () => {
-  try {
-    await connectDB();
-
-    app.listen(PORT, () => {
+  
+  try{
+     await prisma.$connect();
+    server.listen(PORT, () => {
       console.log(`Server is running on http://localhost:${PORT}`);
-      startCartCleanup(); // Start the cart cleanup job after the server starts
+      startCartCleanup();
     });
   } catch (error) {
     console.error('Failed to start server:', error.message);
     process.exit(1);
+
   }
 };
 
-startServer();
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = { app, server, startServer };

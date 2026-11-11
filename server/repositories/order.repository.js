@@ -193,6 +193,20 @@ const cancel = ({ orderId, adminId }) =>
     return tx.order.findUnique({ where: { id: orderId }, include: orderInclude });
   });
 
+  // Only the fields the payment page needs
+const statusSelect = {
+  id: true,
+  paymentMethod: true,
+  paymentStatus: true,
+  orderStatus: true,
+};
+
+const findStatusById = (id) =>
+  prisma.order.findUnique({ where: { id }, select: statusSelect });
+
+const findStatusByIdForUser = (id, userId) =>
+  prisma.order.findFirst({ where: { id, userId }, select: statusSelect });
+
 module.exports = {
   findById,
   findByIdForUser,
@@ -205,4 +219,6 @@ module.exports = {
   createWithStockReservation,
   advanceStatus,
   cancel,
+    findStatusById,
+    findStatusByIdForUser,
 };

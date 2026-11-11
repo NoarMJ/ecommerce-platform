@@ -1,4 +1,6 @@
 const { Server } = require('socket.io');
+const cookieParser = require('cookie-parser');
+const jwt = require('jsonwebtoken');
 const { paymentEvents } = require('./services/paymentEvents');
 const {
   getPaymentStatusForUser,
@@ -7,27 +9,43 @@ const {
 
 const roomFor = (orderId) => `order:${String(orderId).toLowerCase()}`;
 
-function attachSocket(httpServer, sessionMiddleware) {
+function attachSocket(httpServer) {
   const io = new Server(httpServer, {
-    cors: {
-      origin: process.env.CLIENT_URL,
-      credentials: true,
-    },
+    cors: { origin: process.env.CLIENT_URL, credentials: true },
   });
 
-  // Reuse the express-session cookie so a socket knows who is logged in.
-  io.engine.use(sessionMiddleware);
+  // Parse the handshake cookies.
+  io.engine.use(cookieParser());
+
+  // Runs once per connection. Never rejects, so an expired token doesn't cause a reconnect loop.
+  io.use((socket, next) => {
+    const token = socket.request.cookies?.access;
+    if (token) {
+      try {
+        const payload = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+        socket.data.userId = payload.sub; // use Number(payload.sub) if your user ids are integers
+        socket.data.expiresAt = payload.exp * 1000;
+      } catch {
+        // invalid or expired: stays unauthenticated
+      }
+    }
+    next();
+  });
 
   io.on('connection', (socket) => {
-    // The browser asks to follow one order. Reply with the current status,
-    // which covers page refreshes, reconnects and results that landed earlier.
+    // Called once when the payment page opens (and again after a reconnect).
+    // Returns the current status, then the socket joins the order's room for pushed updates.
     socket.on('payment:watch', async (orderId, ack) => {
       const reply = typeof ack === 'function' ? ack : () => {};
 
       try {
-        const userId = socket.request.session?.userId;
-        if (!userId) {
-          return reply({ ok: false, message: 'Authentication required. Please log in.' });
+        const { userId, expiresAt } = socket.data;
+        if (!userId || !(expiresAt > Date.now())) {
+          return reply({
+            ok: false,
+            code: 'AUTH_REQUIRED',
+            message: 'Authentication required. Please log in.',
+          });
         }
 
         if (typeof orderId !== 'string') {
@@ -40,7 +58,7 @@ function attachSocket(httpServer, sessionMiddleware) {
           return reply({ ok: false, message: 'Order not found.' });
         }
 
-        socket.join(roomFor(orderId));
+        socket.join(roomFor(orderId)); // joining twice is harmless
         return reply({ ok: true, status });
       } catch (error) {
         console.error('payment:watch failed:', error);

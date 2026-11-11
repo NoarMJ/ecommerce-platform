@@ -1,5 +1,6 @@
 
 function errorHandler(err, req, res, next) {
+  console.error('UNHANDLED ERROR:', err);
   // If the response has already started, let Express
   // handle the error using its default behavior.
   if (res.headersSent) {

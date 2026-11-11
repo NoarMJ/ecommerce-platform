@@ -1,5 +1,6 @@
+console.log('LOGIN HANDLER HIT');
 const authService = require('../services/auth.service');
-
+const { setAuthCookies, clearAuthCookies } = require('../utils/tokens');
 // TEMPORARY: guest cart merging is switched off until carts move to Postgres.
 // When we migrate carts, the mergeGuestCartIntoUserCart call returns here.
 
@@ -16,6 +17,7 @@ const sendError = (error, res, next) => {
       message: error.message,
     });
   }
+  console.error('Unexpected error:', error.message);
   return next(error);
 };
 
@@ -50,17 +52,12 @@ const register = async (req, res, next) => {
 };
 
 const login = async (req, res, next) => {
-  try {
-    const user = await authService.verifyCredentials(req.body);
 
-    // Regenerate the session after successful authentication.
-    req.session.regenerate((err) => {
-      if (err) return next(err);
+     try {
+      const user = await authService.verifyCredentials(req.body);
 
-      req.session.userId = user.id;
+      setAuthCookies(res, user.id);
 
-      req.session.save(async (saveError) => {
-        if (saveError) return next(saveError);
 
         let cartMerged = false;
         let cartMergeMessage;
@@ -98,22 +95,22 @@ const login = async (req, res, next) => {
           cartMerged,
           ...(cartMergeMessage ? { cartMergeMessage } : {}),
         });
-      });
-    });
+      
+    
   } catch (error) {
+    console.error('Login error:', error.message);
     return sendError(error, res, next);
   }
 };
 
 const getMe = async (req, res, next) => {
   try {
-    if (!req.session?.userId) {
-      return res.status(401).json({ message: 'You are not logged in.' });
-    }
+    
 
-    const user = await authService.getActiveUser(req.session.userId);
+    const user = await authService.getActiveUser(req.userId);
 
     if (!user) {
+      clearAuthCookies(res);
       return res.status(401).json({
         message: 'Your session is no longer valid.',
       });
@@ -139,14 +136,12 @@ const getMe = async (req, res, next) => {
 };
 
 const logout = (req, res, next) => {
-  req.session.destroy((error) => {
-    if (error) return next(error);
-
+  clearAuthCookies(res);
     // Match the cookie name configured by your Express session middleware.
     res.clearCookie('ecommerce.sid', { path: '/' });
 
     return res.status(200).json({ message: 'Logout successful.' });
-  });
+  
 };
 
 module.exports = { register, login, getMe, logout };
