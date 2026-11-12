@@ -38,6 +38,10 @@ jobs:
       - name: Build the client
         run: npm --prefix client run build
 
+      - name: Generate Prisma Client
+        run: npx prisma generate
+        working-directory: server
+
       - name: Lint the server
         run: npm --prefix server run lint
 
