@@ -20,7 +20,7 @@ async function startMpesaPayment(req, res) {
 
     const payment = await paymentService.startMpesaPayment({
       orderId,
-      userId: req.session.userId,
+      userId: req.userId,
       phone,
     });
 
@@ -30,6 +30,20 @@ async function startMpesaPayment(req, res) {
     });
   } catch (error) {
     return handleError(res, error, 'startMpesaPayment');
+  }
+}
+
+// POST /api/payments/reconcile-receipt { orderId, receipt }
+async function reconcilePaymentReceipt(req, res) {
+  try {
+    const result = await paymentService.reconcileMpesaPayment({
+      orderId: req.body?.orderId,
+      userId: req.userId,
+      receipt: req.body?.receipt,
+    });
+    return res.status(202).json(result);
+  } catch (error) {
+    return handleError(res, error, 'reconcilePaymentReceipt');
   }
 }
 
@@ -50,12 +64,32 @@ async function mpesaCallback(req, res) {
   return res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
 }
 
+async function transactionStatusCallback(req, res) {
+  if (req.params.secret !== process.env.MPESA_CALLBACK_SECRET) return res.status(404).end();
+  try {
+    await mpesaService.handleTransactionStatusCallback(req.body);
+  } catch (error) {
+    console.error('transactionStatusCallback:', error);
+  }
+  return res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+}
+
+async function transactionStatusTimeout(req, res) {
+  if (req.params.secret !== process.env.MPESA_CALLBACK_SECRET) return res.status(404).end();
+  try {
+    await mpesaService.handleTransactionStatusTimeout(req.body);
+  } catch (error) {
+    console.error('transactionStatusTimeout:', error);
+  }
+  return res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+}
+
 // GET /api/payments/order/:orderId/status
 async function getOrderPaymentStatus(req, res) {
   try {
     const status = await getPaymentStatusForUser(
       req.params.orderId,
-      req.session.userId
+      req.userId
     );
 
     if (!status) {
@@ -68,4 +102,11 @@ async function getOrderPaymentStatus(req, res) {
   }
 }
 
-module.exports = { startMpesaPayment, mpesaCallback, getOrderPaymentStatus };
+module.exports = {
+  startMpesaPayment,
+  reconcilePaymentReceipt,
+  mpesaCallback,
+  transactionStatusCallback,
+  transactionStatusTimeout,
+  getOrderPaymentStatus,
+};

@@ -1,13 +1,17 @@
 
 import { useEffect, useState } from 'react'
+import { useDispatch } from 'react-redux'
+import { useNavigate } from 'react-router-dom'
 import {
   Alert,
   Avatar,
+  Badge,
   Box,
   CircularProgress,
   Divider,
   Drawer,
   IconButton,
+  InputBase,
   List,
   ListItemButton,
   ListItemIcon,
@@ -29,8 +33,14 @@ import AccountCircleOutlinedIcon from '@mui/icons-material/AccountCircleOutlined
 import LogoutOutlinedIcon from '@mui/icons-material/LogoutOutlined'
 import StorefrontOutlinedIcon from '@mui/icons-material/StorefrontOutlined'
 import ChevronRightOutlinedIcon from '@mui/icons-material/ChevronRightOutlined'
+import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined'
+import NotificationsNoneOutlinedIcon from '@mui/icons-material/NotificationsNoneOutlined'
+import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined'
+import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined'
+import { useTheme } from '@mui/material/styles'
+import { toggleTheme } from '../../features/theme/themeSlice'
 
-import { useGetMeQuery } from '../../services/api'
+import { api, useGetMeQuery, useLogoutMutation, useGetAdminDashboardOverviewQuery } from '../../services/api'
 
 import AdminOverview from './AdminOverview'
 import AdminProducts from './AdminProducts'
@@ -345,15 +355,25 @@ function SessionError() {
 }
 
 export default function AdminDashboard() {
+  const dispatch = useDispatch()
+  const navigate = useNavigate()
+  const theme = useTheme()
+  const isDark = theme.palette.mode === 'dark'
   const [activeSection, setActiveSection] = useState('overview')
+  const [openCreateProduct, setOpenCreateProduct] = useState(false)
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
   const [accountAnchor, setAccountAnchor] = useState(null)
+  const [logoutError, setLogoutError] = useState('')
+  const [logout, { isLoading: isLoggingOut }] = useLogoutMutation()
 
   const {
     data: user,
     isLoading: userLoading,
     error: userError,
   } = useGetMeQuery()
+  const { data: overviewData } = useGetAdminDashboardOverviewQuery(undefined, {
+    skip: !user || user.role !== 'admin',
+  })
 
   const isAllowed = (section) => {
     if (!section.permission) return true
@@ -401,13 +421,33 @@ export default function AdminDashboard() {
     setActiveSection(sectionId)
   }
 
+  const handleCreateProduct = () => {
+    setOpenCreateProduct(true)
+    setActiveSection('products')
+  }
+
+  const handleLogout = async () => {
+    setLogoutError('')
+
+    try {
+      await logout().unwrap()
+      dispatch(api.util.resetApiState())
+      setAccountAnchor(null)
+      navigate('/', { replace: true })
+    } catch (error) {
+      setLogoutError(
+        error?.data?.message || 'Sign out failed. Please try again.',
+      )
+    }
+  }
+
   const renderPage = () => {
     switch (activePage?.id) {
       case 'overview':
-        return <AdminOverview user={user} />
+        return <AdminOverview user={user} onNavigate={setActiveSection} onCreateProduct={handleCreateProduct} />
 
       case 'products':
-        return <AdminProducts user={user} />
+        return <AdminProducts user={user} openCreateOnMount={openCreateProduct} onCreateDialogOpened={() => setOpenCreateProduct(false)} />
 
       case 'categories':
         return <AdminCategories user={user} />
@@ -432,7 +472,7 @@ export default function AdminDashboard() {
       sx={{
         display: 'flex',
         minHeight: '100vh',
-        bgcolor: '#F5F7FB',
+        bgcolor: 'background.default',
       }}
     >
       {/* Desktop sidebar */}
@@ -503,8 +543,9 @@ export default function AdminDashboard() {
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: 2,
-            bgcolor: '#FFFFFF',
-            borderBottom: '1px solid #E5E7EB',
+            bgcolor: 'background.paper',
+            borderBottom: '1px solid',
+            borderColor: 'divider',
             position: 'sticky',
             top: 0,
             zIndex: 10,
@@ -534,7 +575,7 @@ export default function AdminDashboard() {
                 noWrap
                 sx={{
                   fontSize: { xs: 16, sm: 19 },
-                  color: '#111827',
+                  color: 'text.primary',
                 }}
               >
                 {activePage?.label || 'Admin workspace'}
@@ -550,28 +591,26 @@ export default function AdminDashboard() {
             </Box>
           </Stack>
 
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <Box
-              sx={{
-                display: { xs: 'none', sm: 'block' },
-                textAlign: 'right',
-                mr: 0.5,
-              }}
-            >
-              <Typography
-                fontSize={12}
-                fontWeight={700}
-                color="#111827"
-              >
-                {getDisplayName(user)}
-              </Typography>
-              <Typography
-                fontSize={11}
-                color="text.secondary"
-              >
-                {user.isPrimaryAdmin ? 'Primary admin' : 'Administrator'}
-              </Typography>
+          <Stack direction="row" alignItems="center" spacing={{ xs: .5, sm: 1.25 }} sx={{ minWidth: 0 }}>
+            <Box sx={{ display: { xs: 'none', md: 'flex' }, alignItems: 'center', gap: 1, px: 1.5, py: .65, width: { md: 230, lg: 300 }, borderRadius: 99, bgcolor: isDark ? '#202B3D' : '#F3F5F8', border: '1px solid', borderColor: 'divider' }}>
+              <SearchOutlinedIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+              <InputBase placeholder="Search orders, products…" inputProps={{ 'aria-label': 'Search admin sections' }} sx={{ flex: 1, fontSize: 13 }} onKeyDown={(event) => {
+                if (event.key !== 'Enter') return
+                const query = event.currentTarget.value.toLowerCase()
+                if (query.includes('order') || query.includes('transaction') || query.includes('sale')) setActiveSection('orders')
+                else if (query.includes('categor')) setActiveSection('categories')
+                else if (query.includes('admin') || query.includes('user')) setActiveSection('admins')
+                else if (query) setActiveSection('products')
+              }} />
             </Box>
+            <Tooltip title="Notifications">
+              <IconButton aria-label="Open pending orders" onClick={() => setActiveSection('orders')}><Badge badgeContent={overviewData?.counts?.pending || 0} color="error" max={99} overlap="circular"><NotificationsNoneOutlinedIcon /></Badge></IconButton>
+            </Tooltip>
+            <Tooltip title={`Switch to ${isDark ? 'light' : 'dark'} mode`}>
+              <IconButton onClick={() => dispatch(toggleTheme())} aria-label={`Switch to ${isDark ? 'light' : 'dark'} mode`}>
+                {isDark ? <LightModeOutlinedIcon /> : <DarkModeOutlinedIcon />}
+              </IconButton>
+            </Tooltip>
 
             <Tooltip title="Account options">
               <IconButton
@@ -645,6 +684,12 @@ export default function AdminDashboard() {
 
               <Divider />
 
+              {logoutError && (
+                <Alert severity="error" sx={{ mx: 1, my: 1 }}>
+                  {logoutError}
+                </Alert>
+              )}
+
               <MenuItem
                 onClick={() => {
                   setAccountAnchor(null)
@@ -662,11 +707,16 @@ export default function AdminDashboard() {
               <Divider />
 
               <MenuItem
-                onClick={() => setAccountAnchor(null)}
+                onClick={handleLogout}
+                disabled={isLoggingOut}
                 sx={{ py: 1.25, gap: 1.5 }}
               >
-                <LogoutOutlinedIcon fontSize="small" color="action" />
-                Close account menu
+                {isLoggingOut ? (
+                  <CircularProgress size={18} />
+                ) : (
+                  <LogoutOutlinedIcon fontSize="small" color="action" />
+                )}
+                {isLoggingOut ? 'Signing out…' : 'Log out'}
               </MenuItem>
             </Menu>
           </Stack>
@@ -691,8 +741,9 @@ export default function AdminDashboard() {
           sx={{
             px: { xs: 2, md: 3.5 },
             py: 2,
-            borderTop: '1px solid #E5E7EB',
-            bgcolor: '#FFFFFF',
+            borderTop: '1px solid',
+            borderColor: 'divider',
+            bgcolor: 'background.paper',
           }}
         >
           <Typography

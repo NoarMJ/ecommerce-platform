@@ -21,6 +21,12 @@ router.get(
 );
 
 router.get(
+  '/admin/overview',
+  requireAdmin,
+  orderController.adminDashboardOverview
+);
+
+router.get(
   '/admin/:id',
   requireAdmin,
   requirePermission('orders.read'),

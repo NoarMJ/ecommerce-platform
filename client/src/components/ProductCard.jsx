@@ -7,7 +7,6 @@ import {
   Card,
   CardContent,
   Chip,
-  Stack,
   Typography,
 } from '@mui/material'
 import AddShoppingCartIcon from '@mui/icons-material/AddShoppingCart'

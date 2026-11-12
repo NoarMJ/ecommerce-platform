@@ -1,7 +1,7 @@
 require('dotenv').config();
 const crypto = require('crypto');
 const mongoose = require('mongoose');
-const { PrismaClient } = require('@prisma/client');
+const { PrismaClient } = require('../node_modules/.prisma/client-reconciliation');
 
 const User = require('../models/user');
 const Category = require('../models/category');

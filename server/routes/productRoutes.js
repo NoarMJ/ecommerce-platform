@@ -6,7 +6,8 @@ const {
     createProduct,
     updateProduct,
     deleteProduct,
-    getProductBySlug
+    getProductBySlug,
+    uploadProductImage: uploadProductImageController,
 } = require('../controllers/productController');
 
 const requireAuth = require('../middleware/requireAuth');
@@ -14,12 +15,22 @@ const requireAdmin = require('../middleware/requireAdmin');
 const requirePermission = require('../middleware/requirePermission');
 const { getAdminProducts } = require('../controllers/productController');
 const requireAnyPermission = require('../middleware/requireAnyPermission');
+const { uploadProductImage } = require('../middleware/productImageUpload');
 
 const router = express.Router();
 
 router.get('/' , getProducts);
 
 router.get('/slug/:slug', getProductBySlug);
+
+router.post(
+  '/images',
+  requireAuth,
+  requireAdmin,
+  requireAnyPermission(['products.create', 'products.update']),
+  uploadProductImage,
+  uploadProductImageController
+);
 
 
 router.get(

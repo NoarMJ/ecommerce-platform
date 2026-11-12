@@ -45,6 +45,71 @@ async function getAccessToken() {
   return data.access_token;
 }
 
+function assertTransactionStatusConfigured() {
+  assertConfigured();
+  const required = ['MPESA_INITIATOR_NAME', 'MPESA_SECURITY_CREDENTIAL'];
+  const missing = required.filter((name) => !process.env[name]);
+  if (missing.length) {
+    console.error('Missing M-Pesa transaction status settings:', missing.join(', '));
+    throw new AppError('M-Pesa receipt verification is not configured.', 503);
+  }
+}
+
+async function verifyTransactionReceipt({ payment, order, receipt }) {
+  assertTransactionStatusConfigured();
+  const callbackBase = process.env.MPESA_CALLBACK_BASE_URL.replace(/\/$/, '');
+  const callbackSecret = process.env.MPESA_CALLBACK_SECRET;
+  const resultUrl = `${callbackBase}/api/payments/transaction-status/${callbackSecret}`;
+  const timeoutUrl = `${callbackBase}/api/payments/transaction-status-timeout/${callbackSecret}`;
+
+  try {
+    const token = await getAccessToken();
+    const response = await fetch(`${BASE_URL}/mpesa/transactionstatus/v1/query`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        Initiator: process.env.MPESA_INITIATOR_NAME,
+        SecurityCredential: process.env.MPESA_SECURITY_CREDENTIAL,
+        CommandID: 'TransactionStatusQuery',
+        TransactionID: receipt,
+        PartyA: process.env.MPESA_SHORTCODE,
+        IdentifierType: '4',
+        ResultURL: resultUrl,
+        QueueTimeOutURL: timeoutUrl,
+        Remarks: 'Customer payment reconciliation',
+        Occasion: String(order.orderNumber).slice(-12),
+      }),
+    });
+    const data = await response.json();
+
+    if (!response.ok || String(data.ResponseCode) !== '0') {
+      throw new AppError(data.ResponseDescription || 'Safaricom could not check this receipt.', 502);
+    }
+
+    if (data.OriginatorConversationID) {
+      await paymentRepository.setReconciliationConversationId(
+        payment.id,
+        receipt,
+        String(data.OriginatorConversationID)
+      );
+    }
+    paymentEvents.emit('payment-updated', { orderId: payment.orderId });
+    return data;
+  } catch (error) {
+    await paymentRepository.updateReconciliationResult({
+      paymentId: payment.id,
+      receipt,
+      status: 'failed',
+      resultDesc: error.message,
+    });
+    paymentEvents.emit('payment-updated', { orderId: payment.orderId });
+    throw error;
+  }
+}
+
 // YYYYMMDDHHmmss
 function createTimestamp() {
   return new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
@@ -209,4 +274,118 @@ async function handleStkCallback(body) {
   paymentEvents.emit('payment-updated', { orderId: payment.orderId });
 }
 
-module.exports = { initiateStkPush, handleStkCallback };
+const statusResultValues = (result) => {
+  const parameters = result?.ResultParameters?.ResultParameter;
+  if (Array.isArray(parameters)) return parameters;
+  return parameters ? [parameters] : [];
+};
+
+async function handleTransactionStatusCallback(body) {
+  const result = body?.Result;
+  const conversationId = result?.OriginatorConversationID;
+  if (typeof conversationId !== 'string') {
+    console.warn('Ignoring malformed M-Pesa transaction status callback.');
+    return;
+  }
+
+  const values = statusResultValues(result);
+  const valueFor = (names) => values.find((item) => names.includes(item?.Key))?.Value;
+  const receiptValue = valueFor(['TransactionReceipt', 'ReceiptNo', 'MpesaReceiptNumber']);
+  const receipt = String(receiptValue || result.TransactionID || '');
+  let payment = await paymentRepository.findByReconciliationConversationId(conversationId);
+  // Safaricom can return the result very quickly, before the initiating HTTP
+  // response's conversation ID has been committed. The submitted receipt is
+  // unique and safely identifies that in-flight reconciliation request.
+  if (!payment && receipt) payment = await paymentRepository.findByAnyReceipt(receipt);
+  if (!payment || payment.reconciliationStatus !== 'pending') {
+    console.warn('Transaction status callback did not match an active reconciliation.');
+    return;
+  }
+
+  const resultCode = Number(result.ResultCode);
+  const resultDesc = typeof result.ResultDesc === 'string' ? result.ResultDesc : 'Safaricom returned a transaction status.';
+  if (resultCode !== 0) {
+    const status = /not found|does not exist|invalid transaction/i.test(resultDesc) ? 'not_found' : 'failed';
+    const changed = await paymentRepository.updateReconciliationResult({
+      paymentId: payment.id,
+      receipt: payment.reconciliationReceipt,
+      status,
+      resultCode: Number.isInteger(resultCode) ? resultCode : null,
+      resultDesc,
+      rawCallback: body,
+    });
+    if (changed) paymentEvents.emit('payment-updated', { orderId: payment.orderId });
+    return;
+  }
+
+  const returnedReceipt = String(receiptValue || result.TransactionID || '');
+  const amount = Number(valueFor(['TransactionAmount', 'Amount']));
+  const expectedAmount = Math.ceil(payment.amountMinor / 100);
+  const debitNames = values.filter((item) => item?.Key === 'DebitPartyName').map((item) => String(item.Value ?? ''));
+  const payerMsisdn = debitNames.map((entry) => entry.match(/254[17]\d{8}/)?.[0]).find(Boolean);
+  const receiptMatches = returnedReceipt.toUpperCase() === String(payment.reconciliationReceipt).toUpperCase();
+  const amountMatches = Number.isFinite(amount) && amount === expectedAmount;
+  const payerMatches = !payerMsisdn || payerMsisdn === payment.phone;
+
+  if (!receiptMatches || !amountMatches || !payerMatches) {
+    const reasons = [];
+    if (!receiptMatches) reasons.push('receipt did not match');
+    if (!amountMatches) reasons.push('amount did not match this order');
+    if (!payerMatches) reasons.push('payer phone did not match the prompt');
+    const changed = await paymentRepository.updateReconciliationResult({
+      paymentId: payment.id,
+      receipt: payment.reconciliationReceipt,
+      status: 'mismatch',
+      resultCode,
+      resultDesc: `Safaricom found a transaction, but the ${reasons.join(', ')}.`,
+      rawCallback: body,
+    });
+    if (changed) paymentEvents.emit('payment-updated', { orderId: payment.orderId });
+    return;
+  }
+
+  try {
+    const changed = await paymentRepository.completeFromReconciliation({
+      payment,
+      receipt: returnedReceipt,
+      resultCode,
+      resultDesc,
+      rawCallback: body,
+    });
+    if (changed) paymentEvents.emit('payment-updated', { orderId: payment.orderId });
+  } catch (error) {
+    if (error.code !== 'P2002') throw error;
+    const changed = await paymentRepository.updateReconciliationResult({
+      paymentId: payment.id,
+      receipt: payment.reconciliationReceipt,
+      status: 'mismatch',
+      resultCode,
+      resultDesc: 'This M-Pesa receipt is already attached to another payment.',
+      rawCallback: body,
+    });
+    if (changed) paymentEvents.emit('payment-updated', { orderId: payment.orderId });
+  }
+}
+
+async function handleTransactionStatusTimeout(body) {
+  const conversationId = body?.OriginatorConversationID || body?.Result?.OriginatorConversationID;
+  if (typeof conversationId !== 'string') return;
+  const payment = await paymentRepository.findByReconciliationConversationId(conversationId);
+  if (!payment) return;
+  const changed = await paymentRepository.updateReconciliationResult({
+    paymentId: payment.id,
+    receipt: payment.reconciliationReceipt,
+    status: 'failed',
+    resultDesc: 'Safaricom did not return a transaction status. You can check the receipt again.',
+    rawCallback: body,
+  });
+  if (changed) paymentEvents.emit('payment-updated', { orderId: payment.orderId });
+}
+
+module.exports = {
+  initiateStkPush,
+  handleStkCallback,
+  verifyTransactionReceipt,
+  handleTransactionStatusCallback,
+  handleTransactionStatusTimeout,
+};

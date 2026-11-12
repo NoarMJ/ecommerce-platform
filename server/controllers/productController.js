@@ -1,4 +1,6 @@
 const productService = require('../services/product.service');
+const { Readable } = require('node:stream');
+const cloudinary = require('../config/cloudinary');
 
 // Temporary bridge: the frontend still reads _id
 const legacyCategory = (category) =>
@@ -19,6 +21,52 @@ const sendError = (error, res, next) => {
     });
   }
   return next(error);
+};
+
+function uploadImageBuffer(buffer) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: '2valid/products',
+        resource_type: 'image',
+        unique_filename: true,
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        return resolve(result);
+      }
+    );
+
+    Readable.from([buffer]).pipe(stream);
+  });
+}
+
+// POST /api/products/images (admin)
+const uploadProductImage = async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ message: 'Choose an image file to upload.' });
+  }
+
+  const config = cloudinary.config();
+  if (!config.cloud_name || !config.api_key || !config.api_secret) {
+    return res.status(503).json({ message: 'Product image uploads are not configured.' });
+  }
+
+  try {
+    const result = await uploadImageBuffer(req.file.buffer);
+    return res.status(201).json({
+      status: 'success',
+      data: {
+        url: result.secure_url,
+        publicId: result.public_id,
+      },
+    });
+  } catch (error) {
+    console.error('Product image upload failed:', error.message);
+    return res.status(502).json({
+      message: 'Could not upload the image right now. Please try again.',
+    });
+  }
 };
 
 // GET /api/products
@@ -141,4 +189,5 @@ module.exports = {
   updateProduct,
   deleteProduct,
   getAdminProducts,
+  uploadProductImage,
 };

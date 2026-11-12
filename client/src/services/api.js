@@ -1,16 +1,32 @@
-// one shared service that talks to the backend 
+import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react'
+import { refreshAccessToken } from './authRefresh'
 
-import { createApi , fetchBaseQuery } from "@reduxjs/toolkit/query/react";
-console.log('API_BASE_URL: ' , import.meta.env.VITE_API_BASE_URL)
+const rawBaseQuery = fetchBaseQuery({
+  baseUrl: import.meta.env.VITE_API_BASE_URL,
+  credentials: 'include',
+})
+
+// A 401 from these means "wrong credentials" or "already logged out", not "token expired".
+const NO_REFRESH_URLS = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/logout']
+
+const baseQueryWithReauth = async (args, baseApi, extraOptions) => {
+  let result = await rawBaseQuery(args, baseApi, extraOptions)
+
+  const url = typeof args === 'string' ? args : args.url
+  if (result.error?.status === 401 && !NO_REFRESH_URLS.includes(url)) {
+    const refreshed = await refreshAccessToken()
+    if (refreshed) {
+      result = await rawBaseQuery(args, baseApi, extraOptions) // retry once
+    }
+  }
+  return result
+}
 
 export const api = createApi({
-    reducerPath: 'api',
-
-    baseQuery: fetchBaseQuery({
-        baseUrl: import.meta.env.VITE_API_BASE_URL,
-        credentials: 'include',
-    }),
-    tagTypes: ['Product' , 'Category', 'Cart'  , 'Auth', 'Admin', 'Order'],
+  reducerPath: 'api',
+  baseQuery: baseQueryWithReauth,
+  tagTypes: ['Product', 'Category', 'Cart', 'Auth', 'Admin', 'Order'],
+  // ...endpoints stay exactly as they are
 
 
   endpoints: (builder) => ({
@@ -171,6 +187,20 @@ createProduct: builder.mutation({
   invalidatesTags: ['Product'],
 }),
 
+uploadProductImage: builder.mutation({
+  query: (file) => {
+    const formData = new FormData()
+    formData.append('image', file)
+
+    return {
+      url: '/products/images',
+      method: 'POST',
+      body: formData,
+    }
+  },
+  transformResponse: (response) => response.data,
+}),
+
 updateProduct: builder.mutation({
   query: ({ id, ...productData }) => ({
     url: `/products/${id}`,
@@ -265,6 +295,11 @@ getOrderById: builder.query({
 
 
 // ---- Admin orders ----
+getAdminDashboardOverview: builder.query({
+  query: () => '/orders/admin/overview',
+  providesTags: ['Order', 'Product'],
+}),
+
 getAdminOrders: builder.query({
   query: (params = {}) => ({
     url: '/orders',
@@ -306,18 +341,17 @@ payOrderWithMpesa: builder.mutation({
     method: 'POST',
     body: { orderId, phone },
   }),
-  // Refresh order data so the payment status is re-fetched.
+  // Refresh order data after a new payment prompt is accepted.
   invalidatesTags: ['Order'],
 }),
 
-
-
-
-getPaymentStatus: builder.query({
-  query: (orderId) => `/payments/order/${orderId}/status`,
-  providesTags: ['Order'],
+reconcileMpesaReceipt: builder.mutation({
+  query: ({ orderId, receipt }) => ({
+    url: '/payments/reconcile-receipt',
+    method: 'POST',
+    body: { orderId, receipt },
+  }),
 }),
-
 
 }),
 })
@@ -340,6 +374,7 @@ export const {
   useUpdateAdminPermissionsMutation,
   useGetAdminProductsQuery,
     useCreateProductMutation,
+  useUploadProductImageMutation,
     useUpdateProductMutation,
     useDeactivateProductMutation,
     useCreateCategoryMutation,
@@ -352,9 +387,10 @@ usePlaceOrderMutation,
 useGetMyOrdersQuery,
 useGetOrderByIdQuery,
 useGetAdminOrdersQuery,
+useGetAdminDashboardOverviewQuery,
 useGetAdminOrderByIdQuery,
 useUpdateOrderStatusMutation,
 useCancelOrderMutation,
 usePayOrderWithMpesaMutation,
-useGetPaymentStatusQuery,
+useReconcileMpesaReceiptMutation,
 } = api

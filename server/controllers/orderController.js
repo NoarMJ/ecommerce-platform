@@ -58,7 +58,7 @@ const toOrderResponse = (order) => ({
 async function placeOrder(req, res) {
   try {
     const { order, created } = await orderService.createOrder({
-      userId: req.session.userId,
+      userId: req.userId,
       idempotencyKey: req.get('Idempotency-Key'),
       checkoutData: req.body,
     });
@@ -73,7 +73,7 @@ async function placeOrder(req, res) {
 // GET /api/orders/my-orders
 async function getMyOrders(req, res) {
   try {
-    const orders = await orderService.getUserOrders(req.session.userId);
+    const orders = await orderService.getUserOrders(req.userId);
     return res.json({ orders: orders.map(toOrderResponse) });
   } catch (error) {
     return handleError(res, error, 'getMyOrders');
@@ -85,7 +85,7 @@ async function getOrderById(req, res) {
   try {
     // Admin access comes later with roles. For now only the owner can view an order.
     const order = await orderService.getOrderForUser(
-      req.session.userId,
+      req.userId,
       req.params.id
     );
     return res.json({ order: toOrderResponse(order) });
@@ -101,6 +101,18 @@ async function adminListOrders(req, res) {
     return res.json({ ...result, orders: result.orders.map(toOrderResponse) });
   } catch (error) {
     return handleError(res, error, 'adminListOrders');
+  }
+}
+
+async function adminDashboardOverview(req, res) {
+  try {
+    const result = await orderService.getDashboardOverview();
+    return res.json({
+      ...result,
+      recentOrders: result.recentOrders.map(toOrderResponse),
+    });
+  } catch (error) {
+    return handleError(res, error, 'adminDashboardOverview');
   }
 }
 
@@ -120,7 +132,7 @@ async function adminUpdateStatus(req, res) {
     const order = await orderService.updateOrderStatus({
       orderId: req.params.id,
       status: req.body?.status,
-      adminId: req.session.userId,
+      adminId: req.userId,
     });
     return res.json({ order: toOrderResponse(order) });
   } catch (error) {
@@ -133,7 +145,7 @@ async function adminCancelOrder(req, res) {
   try {
     const order = await orderService.cancelOrder({
       orderId: req.params.id,
-      adminId: req.session.userId,
+      adminId: req.userId,
     });
     return res.json({ order: toOrderResponse(order) });
   } catch (error) {
@@ -146,6 +158,7 @@ module.exports = {
   getMyOrders,
   getOrderById,
   adminListOrders,
+  adminDashboardOverview,
   adminGetOrder,
   adminUpdateStatus,
   adminCancelOrder,

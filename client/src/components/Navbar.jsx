@@ -375,13 +375,13 @@ export default function Navbar() {
           </Button>
 
 
-           <Button
+           {/* <Button
             component={RouterLink}
             to="/checkout"
             sx={navButtonSx(isCheckoutPage)}
           >
             Checkout
-          </Button>
+          </Button> */}
 
           
           <Button

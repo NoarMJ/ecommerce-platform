@@ -15,6 +15,8 @@ async function buildStatus(order) {
           status: payment.status,
           resultDesc: payment.resultDesc ?? undefined,
           receipt: payment.mpesaReceiptNumber ?? undefined,
+          reconciliationReceipt: payment.reconciliationReceipt ?? undefined,
+          reconciliationStatus: payment.reconciliationStatus ?? undefined,
           startedAt: payment.createdAt,
         }
       : null,

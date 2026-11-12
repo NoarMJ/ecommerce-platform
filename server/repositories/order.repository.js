@@ -76,6 +76,66 @@ const countByStatus = async () => {
   return Object.fromEntries(rows.map((row) => [row.orderStatus, row._count._all]));
 };
 
+const getDashboardOverview = async () => {
+  const since = new Date();
+  since.setUTCDate(since.getUTCDate() - 6);
+  since.setUTCHours(0, 0, 0, 0);
+
+  const [paidTotals, weeklyPaidOrders, recentOrders, counts, totalOrders, topItems] = await Promise.all([
+    prisma.order.aggregate({ where: { paymentStatus: 'paid' }, _sum: { totalMinor: true }, _count: { _all: true } }),
+    prisma.order.findMany({ where: { paymentStatus: 'paid', createdAt: { gte: since } }, select: { createdAt: true, totalMinor: true } }),
+    prisma.order.findMany({ take: 6, orderBy: { createdAt: 'desc' }, include: withCustomer }),
+    countByStatus(),
+    prisma.order.count(),
+    prisma.orderItem.groupBy({
+      by: ['productId'],
+      where: { order: { paymentStatus: 'paid' } },
+      _sum: { quantity: true, lineTotalMinor: true },
+      orderBy: { _sum: { quantity: 'desc' } },
+      take: 5,
+    }),
+  ]);
+
+  const productIds = topItems.map((item) => item.productId);
+  const products = await prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, name: true, images: true, priceMinor: true, stock: true } });
+  const productById = new Map(products.map((product) => [product.id, product]));
+  const topProducts = topItems.map((item) => ({
+    ...productById.get(item.productId),
+    image: productById.get(item.productId)?.images?.[0],
+    unitsSold: item._sum.quantity || 0,
+    revenueMinor: item._sum.lineTotalMinor || 0,
+  })).filter((product) => product.id);
+
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(since);
+    date.setUTCDate(since.getUTCDate() + index);
+    const key = date.toISOString().slice(0, 10);
+    return { date: key, salesMinor: 0, paidOrders: 0 };
+  });
+  const dayMap = new Map(days.map((day) => [day.date, day]));
+  for (const order of weeklyPaidOrders) {
+    const day = dayMap.get(order.createdAt.toISOString().slice(0, 10));
+    if (day) {
+      day.salesMinor += order.totalMinor;
+      day.paidOrders += 1;
+    }
+  }
+
+  return {
+    summary: {
+      paidSalesMinor: paidTotals._sum.totalMinor || 0,
+      paidOrderCount: paidTotals._count._all || 0,
+      totalOrders,
+      weeklySalesMinor: days.reduce((sum, day) => sum + day.salesMinor, 0),
+      weeklyPaidOrderCount: days.reduce((sum, day) => sum + day.paidOrders, 0),
+    },
+    weeklySales: days,
+    counts,
+    recentOrders,
+    topProducts,
+  };
+};
+
 // Takes stock, creates the order and empties the cart as ONE transaction.
 // If anything fails, nothing is changed.
 const createWithStockReservation = ({ orderData, lines, cartId }) =>
@@ -216,6 +276,7 @@ module.exports = {
   exists,
   findPage,
   countByStatus,
+  getDashboardOverview,
   createWithStockReservation,
   advanceStatus,
   cancel,

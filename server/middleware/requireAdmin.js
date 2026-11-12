@@ -1,15 +1,15 @@
-const { getActiveUser } = require('../services/auth.service');
+const authService = require('../services/auth.service');
 
 const requireAdmin = async (req, res, next) => {
   try {
-    if (!req.session || !req.session.userId) {
+    if (!req.userId) {
       return res.status(401).json({
         status: 'error',
         message: 'Authentication required. Please log in.',
       });
     }
 
-    const user = await getActiveUser(req.session.userId);
+    const user = await authService.getActiveUser(req.userId);
 
     if (!user) {
       return res.status(401).json({

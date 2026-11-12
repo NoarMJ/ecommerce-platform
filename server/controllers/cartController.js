@@ -16,7 +16,7 @@ const sendError = (error, res, next) => {
 
 // Who is asking? Old sessions hold Mongo ids, so only UUIDs count as logged in.
 const getIdentity = (req) => ({
-  userId: isUuid(req.session?.userId) ? req.session.userId : null,
+  userId: isUuid(req.userId) ? req.userId : null,
   guestToken: req.cookies?.[GUEST_CART_COOKIE],
 });
 

@@ -1,5 +1,5 @@
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Alert,
   Box,
@@ -37,11 +37,13 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import CloseIcon from '@mui/icons-material/Close'
 import ImageOutlinedIcon from '@mui/icons-material/ImageOutlined'
+import FileUploadOutlinedIcon from '@mui/icons-material/FileUploadOutlined'
 
 import {
   useGetAdminProductsQuery,
   useGetAdminCategoriesQuery,
   useCreateProductMutation,
+  useUploadProductImageMutation,
   useUpdateProductMutation,
   useDeactivateProductMutation,
   useActivateProductMutation,
@@ -61,7 +63,10 @@ const EMPTY_FORM = {
   price: '',
   stock: '',
   imageUrl: '',
+  imageFile: null,
 }
+
+const MAX_PRODUCT_IMAGE_BYTES = 5 * 1024 * 1024
 
 function createSlug(value = '') {
   return String(value)
@@ -182,14 +187,48 @@ function ProductFormFields({
   categories,
   slugManuallyEdited,
   setSlugManuallyEdited,
+  onNotice,
+  disabled = false,
 }) {
   const additionalCategories = form.categories ?? []
+  const [localImagePreview, setLocalImagePreview] = useState('')
+
+  useEffect(() => {
+    if (!form.imageFile) {
+      setLocalImagePreview('')
+      return undefined
+    }
+
+    const preview = URL.createObjectURL(form.imageFile)
+    setLocalImagePreview(preview)
+    return () => URL.revokeObjectURL(preview)
+  }, [form.imageFile])
 
   const updateField = (field, value) => {
     setForm((previous) => ({
       ...previous,
       [field]: value,
+      ...(field === 'imageUrl' ? { imageFile: null } : {}),
     }))
+  }
+
+  const handleImageSelection = (event) => {
+    const file = event.target.files?.[0] ?? null
+    event.target.value = ''
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      onNotice({ type: 'error', message: 'Choose an image file.' })
+      return
+    }
+
+    if (file.size > MAX_PRODUCT_IMAGE_BYTES) {
+      onNotice({ type: 'error', message: 'Image must be 5 MB or smaller.' })
+      return
+    }
+
+    onNotice(null)
+    setForm((previous) => ({ ...previous, imageFile: file }))
   }
 
   const handleAdditionalCategoriesChange = (value) => {
@@ -212,6 +251,11 @@ function ProductFormFields({
   }
 
   return (
+    <Box
+      component="fieldset"
+      disabled={disabled}
+      sx={{ border: 0, m: 0, minWidth: 0, p: 0 }}
+    >
     <Stack spacing={2.5} sx={{ pt: 1 }}>
       <TextField
         label="Product name"
@@ -398,15 +442,34 @@ function ProductFormFields({
         Product image
       </Typography>
 
+      <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
+        <Button
+          component="label"
+          variant="outlined"
+          startIcon={<FileUploadOutlinedIcon />}
+        >
+          Choose image from device
+          <input
+            type="file"
+            hidden
+            accept="image/jpeg,image/png,image/webp,image/avif,image/gif"
+            onChange={handleImageSelection}
+          />
+        </Button>
+        <Typography variant="body2" color="text.secondary">
+          {form.imageFile?.name || 'JPG, PNG, WebP, AVIF or GIF; up to 5 MB'}
+        </Typography>
+      </Stack>
+
       <TextField
-        label="Image URL"
+        label="Image URL (optional)"
         value={form.imageUrl}
         onChange={(event) =>
           updateField('imageUrl', event.target.value)
         }
         fullWidth
         placeholder="https://example.com/product-image.jpg"
-        helperText="Use a publicly accessible image URL."
+        helperText="Choose a local image above, or enter an existing public image URL."
         slotProps={{
           htmlInput: {
             type: 'url',
@@ -414,7 +477,7 @@ function ProductFormFields({
         }}
       />
 
-      {form.imageUrl.trim() && (
+      {(localImagePreview || form.imageUrl.trim()) && (
         <Box
           sx={{
             display: 'flex',
@@ -429,7 +492,7 @@ function ProductFormFields({
         >
           <Box
             component="img"
-            src={form.imageUrl.trim()}
+            src={localImagePreview || form.imageUrl.trim()}
             alt="Product preview"
             onError={(event) => {
               event.currentTarget.style.visibility = 'hidden'
@@ -455,12 +518,13 @@ function ProductFormFields({
               color="text.secondary"
               sx={{ overflowWrap: 'anywhere' }}
             >
-              {form.imageUrl}
+            {form.imageFile?.name || form.imageUrl}
             </Typography>
           </Box>
         </Box>
       )}
     </Stack>
+    </Box>
   )
 }
 
@@ -468,7 +532,7 @@ function ProductFormFields({
 // Main page
 // ---------------------------------------------------------
 
-export default function AdminProducts({ user }) {
+export default function AdminProducts({ user, openCreateOnMount = false, onCreateDialogOpened }) {
   // Search and filters
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
@@ -526,6 +590,9 @@ export default function AdminProducts({ user }) {
   // Mutations
   const [createProduct, { isLoading: isCreating }] =
     useCreateProductMutation()
+
+  const [uploadProductImage, { isLoading: isUploadingImage }] =
+    useUploadProductImageMutation()
 
   const [updateProduct, { isLoading: isUpdating }] =
     useUpdateProductMutation()
@@ -709,10 +776,15 @@ export default function AdminProducts({ user }) {
       sku: form.sku.trim().toUpperCase(),
       priceMinor: Math.round(Number(form.price) * 100),
       stock: Number(form.stock),
-      images: form.imageUrl.trim()
-        ? [form.imageUrl.trim()]
-        : [],
+      images: form.imageUrl.trim() ? [form.imageUrl.trim()] : [],
     }
+  }
+
+  const formWithUploadedImage = async (form) => {
+    if (!form.imageFile) return form
+
+    const uploaded = await uploadProductImage(form.imageFile).unwrap()
+    return { ...form, imageUrl: uploaded.url, imageFile: null }
   }
 
   // -------------------------------------------------------
@@ -726,8 +798,17 @@ export default function AdminProducts({ user }) {
     setNotice(null)
   }
 
+  useEffect(() => {
+    if (!openCreateOnMount) return
+    setCreateForm({ ...EMPTY_FORM, categories: [] })
+    setCreateSlugManuallyEdited(false)
+    setCreateDialogOpen(true)
+    setNotice(null)
+    onCreateDialogOpened?.()
+  }, [openCreateOnMount, onCreateDialogOpened])
+
   const closeCreateDialog = () => {
-    if (isCreating) return
+    if (isCreating || isUploadingImage) return
 
     setCreateDialogOpen(false)
     setCreateForm({ ...EMPTY_FORM, categories: [] })
@@ -747,13 +828,9 @@ export default function AdminProducts({ user }) {
       return
     }
 
-    const payload = buildPayload(createForm)
-
-    // Keep this log until product creation works correctly.
-    console.log('Create product payload:', payload)
-
     try {
-      await createProduct(payload).unwrap()
+      const formWithImage = await formWithUploadedImage(createForm)
+      await createProduct(buildPayload(formWithImage)).unwrap()
 
       setCreateDialogOpen(false)
       setCreateForm({ ...EMPTY_FORM, categories: [] })
@@ -790,7 +867,7 @@ export default function AdminProducts({ user }) {
   }
 
   const closeEditDialog = () => {
-    if (isUpdating) return
+    if (isUpdating || isUploadingImage) return
 
     setEditingProduct(null)
     setEditForm({ ...EMPTY_FORM, categories: [] })
@@ -811,7 +888,8 @@ export default function AdminProducts({ user }) {
     }
 
     try {
-      const payload = buildPayload(editForm)
+      const formWithImage = await formWithUploadedImage(editForm)
+      const payload = buildPayload(formWithImage)
 
       await updateProduct({
         id: editingProduct._id,
@@ -1482,7 +1560,7 @@ export default function AdminProducts({ user }) {
 
             <IconButton
               onClick={closeCreateDialog}
-              disabled={isCreating}
+              disabled={isCreating || isUploadingImage}
               aria-label="Close create product dialog"
             >
               <CloseIcon />
@@ -1516,6 +1594,8 @@ export default function AdminProducts({ user }) {
                 categories={categoryOptions}
                 slugManuallyEdited={createSlugManuallyEdited}
                 setSlugManuallyEdited={setCreateSlugManuallyEdited}
+                onNotice={setNotice}
+                disabled={isCreating || isUploadingImage}
               />
             )}
           </DialogContent>
@@ -1526,7 +1606,7 @@ export default function AdminProducts({ user }) {
             <Button
               onClick={closeCreateDialog}
               color="inherit"
-              disabled={isCreating}
+              disabled={isCreating || isUploadingImage}
             >
               Cancel
             </Button>
@@ -1536,19 +1616,24 @@ export default function AdminProducts({ user }) {
               variant="contained"
               disabled={
                 isCreating ||
+                isUploadingImage ||
                 categoriesLoading ||
                 categoriesError ||
                 categories.length === 0
               }
               startIcon={
-                isCreating ? (
+                (isCreating || isUploadingImage) ? (
                   <CircularProgress size={18} color="inherit" />
                 ) : (
                   <AddOutlinedIcon />
                 )
               }
             >
-              {isCreating ? 'Creating...' : 'Create product'}
+              {isUploadingImage
+                ? 'Uploading image…'
+                : isCreating
+                  ? 'Creating…'
+                  : 'Create product'}
             </Button>
           </DialogActions>
         </Box>
@@ -1583,7 +1668,7 @@ export default function AdminProducts({ user }) {
 
             <IconButton
               onClick={closeEditDialog}
-              disabled={isUpdating}
+              disabled={isUpdating || isUploadingImage}
               aria-label="Close edit product dialog"
             >
               <CloseIcon />
@@ -1616,6 +1701,8 @@ export default function AdminProducts({ user }) {
                 categories={categoryOptions}
                 slugManuallyEdited={editSlugManuallyEdited}
                 setSlugManuallyEdited={setEditSlugManuallyEdited}
+                onNotice={setNotice}
+                disabled={isUpdating || isUploadingImage}
               />
             )}
           </DialogContent>
@@ -1626,7 +1713,7 @@ export default function AdminProducts({ user }) {
             <Button
               onClick={closeEditDialog}
               color="inherit"
-              disabled={isUpdating}
+              disabled={isUpdating || isUploadingImage}
             >
               Cancel
             </Button>
@@ -1636,19 +1723,24 @@ export default function AdminProducts({ user }) {
               variant="contained"
               disabled={
                 isUpdating ||
+                isUploadingImage ||
                 categoriesLoading ||
                 categoriesError ||
                 categories.length === 0
               }
               startIcon={
-                isUpdating ? (
+                (isUpdating || isUploadingImage) ? (
                   <CircularProgress size={18} color="inherit" />
                 ) : (
                   <EditOutlinedIcon />
                 )
               }
             >
-              {isUpdating ? 'Saving...' : 'Save changes'}
+              {isUploadingImage
+                ? 'Uploading image…'
+                : isUpdating
+                  ? 'Saving…'
+                  : 'Save changes'}
             </Button>
           </DialogActions>
         </Box>

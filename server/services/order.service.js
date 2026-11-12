@@ -257,6 +257,8 @@ const listOrders = async ({ status, search, page = 1, limit = 20 } = {}) => {
   };
 };
 
+const getDashboardOverview = () => orderRepository.getDashboardOverview();
+
 const getOrderForAdmin = async (orderId) => {
   if (!isUuid(orderId)) throw new AppError('Order not found.', 404);
 
@@ -332,6 +334,7 @@ module.exports = {
   getUserOrders,
   getOrderForUser,
   listOrders,
+  getDashboardOverview,
   getOrderForAdmin,
   updateOrderStatus,
   cancelOrder,
