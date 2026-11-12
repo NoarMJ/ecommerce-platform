@@ -153,7 +153,6 @@ export default function Navbar() {
   const isProductsPage = location.pathname === '/products'
   const isCartPage = location.pathname === '/cart'
   const isOrdersPage = location.pathname ==='/orders'
-  const isCheckoutPage =location.pathname === "/checkout"
 
   const closeMobile = () => setMobileOpen(false)
 
