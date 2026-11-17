@@ -1,4 +1,4 @@
-const adminSellerService = require('../services/adminSeller.service');
+const adminSellerService = require('../services/adminseller.service');
  
 // Same shape as sellerController.js; reuse your shared helper if you have one.
 const sendError = (error, res, next) => {
