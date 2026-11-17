@@ -606,7 +606,7 @@ export default function SellerLandingPage() {
           </Box>
 
           <Grid container spacing={3}>
-            {steps.map((step, index) => (
+            {steps.map((step) => (
               <Grid key={step.number} size={{ xs: 12, md: 4 }}>
                 <Paper
                   elevation={0}

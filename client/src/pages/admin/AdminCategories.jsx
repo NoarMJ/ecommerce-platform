@@ -97,7 +97,10 @@ export default function AdminCategories({ user }) {
     { isLoading: isActivating, error: activateError },
   ] = useActivateCategoryMutation()
 
-  const categories = response?.data ?? []
+  const categories = useMemo(
+    () => response?.data ?? [],
+    [response?.data],
+  )
 
   // Keep these checks aligned with the user object returned by /api/auth/me.
   const isPrimaryAdmin =

@@ -621,9 +621,13 @@ export default function AdminProducts({ user, openCreateOnMount = false, onCreat
     ? productsResponse.data
     : []
 
-  const rawCategories = Array.isArray(categoriesResponse?.data)
-    ? categoriesResponse.data
-    : []
+  const rawCategories = useMemo(
+    () =>
+      Array.isArray(categoriesResponse?.data)
+        ? categoriesResponse.data
+        : [],
+    [categoriesResponse],
+  )
 
   // Do not show categories explicitly marked inactive.
   // The backend remains responsible for verifying category validity.

@@ -7,7 +7,6 @@ import {
   Box,
   Button,
   Container,
-  Divider,
   Paper,
   Stack,
   Typography,
@@ -15,7 +14,6 @@ import {
   Stepper,
   Step,
   StepLabel,
-  Skeleton,
 } from '@mui/material';
 
 import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
