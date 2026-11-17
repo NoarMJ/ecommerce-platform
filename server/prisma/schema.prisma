@@ -30,6 +30,18 @@ enum Role {
   admin
 }
 
+enum SellerStatus {
+  pending
+  approved
+  rejected
+  suspended
+}
+
+enum SellerAccountType {
+  individual
+  company
+}
+
 model User {
   id             String   @id @default(uuid()) @db.Uuid
   firstName      String   @db.VarChar(50)
@@ -48,8 +60,39 @@ model User {
   orders        Order[]
   statusChanges OrderStatusHistory[]
   payments      Payment[]
+  sellerProfile SellerProfile?       @relation("SellerOwner")
+  sellerReviews SellerProfile[]      @relation("SellerReviewer")
 
   @@map("users")
+}
+
+model SellerProfile {
+  id              String            @id @default(uuid()) @db.Uuid
+  userId          String            @unique @db.Uuid
+  accountType     SellerAccountType
+  dateOfBirth     DateTime          @db.Date
+  shopName        String            @db.VarChar(120)
+  companyName     String?           @db.VarChar(150)
+  county          String            @db.VarChar(100)
+  town            String            @db.VarChar(100)
+  description     String            @default("")
+  status          SellerStatus      @default(pending)
+  submittedAt     DateTime          @default(now())
+  reviewedAt      DateTime?
+  reviewedById    String?           @db.Uuid
+  rejectionReason String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  user       User  @relation("SellerOwner", fields: [userId], references: [id], onDelete: Restrict)
+  reviewedBy User? @relation("SellerReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  products   Product[]
+  orderItems OrderItem[]
+
+  @@index([status, submittedAt])
+  @@index([reviewedById])
+  @@map("seller_profiles")
 }
 
 model Product {
@@ -65,8 +108,10 @@ model Product {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  categoryId String   @db.Uuid
-  category   Category @relation("PrimaryCategory", fields: [categoryId], references: [id], onDelete: Restrict)
+  categoryId String         @db.Uuid
+  category   Category       @relation("PrimaryCategory", fields: [categoryId], references: [id], onDelete: Restrict)
+  sellerId   String?        @db.Uuid
+  seller     SellerProfile? @relation(fields: [sellerId], references: [id], onDelete: Restrict)
 
   categories Category[] @relation("ExtraCategories")
 
@@ -74,6 +119,7 @@ model Product {
   orderItems OrderItem[]
 
   @@index([categoryId])
+  @@index([sellerId])
   @@map("products")
 }
 
@@ -165,22 +211,26 @@ model Order {
 }
 
 model OrderItem {
-  id             String  @id @default(uuid()) @db.Uuid
-  orderId        String  @db.Uuid
-  productId      String  @db.Uuid
-  name           String
-  sku            String?
-  image          String?
-  unitPriceMinor Int
-  quantity       Int
-  lineTotalMinor Int
+  id                       String  @id @default(uuid()) @db.Uuid
+  orderId                  String  @db.Uuid
+  productId                String  @db.Uuid
+  name                     String
+  sku                      String?
+  image                    String?
+  unitPriceMinor           Int
+  quantity                 Int
+  lineTotalMinor           Int
+  sellerId                 String? @db.Uuid
+  sellerShopNameAtPurchase String?
 
-  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  order   Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+  seller  SellerProfile? @relation(fields: [sellerId], references: [id], onDelete: Restrict)
 
   position Int @default(0)
 
   @@index([orderId])
+  @@index([sellerId])
   @@map("order_items")
 }
 
@@ -215,13 +265,13 @@ model Payment {
   amountMinor Int
   status      PaymentStatus @default(initiated)
 
-  merchantRequestId  String?
-  checkoutRequestId  String? @unique
-  mpesaReceiptNumber String? @unique
-  reconciliationReceipt String? @unique
-  reconciliationConversationId String? @unique
-  reconciliationStatus String?
-  reconciliationRequestedAt DateTime?
+  merchantRequestId            String?
+  checkoutRequestId            String?   @unique
+  mpesaReceiptNumber           String?   @unique
+  reconciliationReceipt        String?   @unique
+  reconciliationConversationId String?   @unique
+  reconciliationStatus         String?
+  reconciliationRequestedAt    DateTime?
 
   resultCode  Int?
   resultDesc  String?
@@ -230,8 +280,8 @@ model Payment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  user  User  @relation(fields: [userId], references: [id], onDelete: Restrict)
+  order                Order                        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  user                 User                         @relation(fields: [userId], references: [id], onDelete: Restrict)
   receiptVerifications PaymentReceiptVerification[]
 
   @@index([orderId])

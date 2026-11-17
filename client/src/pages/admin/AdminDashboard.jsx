@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from 'react'
 import { useDispatch } from 'react-redux'
 import { useNavigate } from 'react-router-dom'
@@ -28,6 +27,7 @@ import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined'
 import CategoryOutlinedIcon from '@mui/icons-material/CategoryOutlined'
 import ShoppingBagOutlinedIcon from '@mui/icons-material/ShoppingBagOutlined'
 import PeopleAltOutlinedIcon from '@mui/icons-material/PeopleAltOutlined'
+import PersonOutlineOutlinedIcon from '@mui/icons-material/PersonOutlineOutlined'
 import MenuOutlinedIcon from '@mui/icons-material/MenuOutlined'
 import AccountCircleOutlinedIcon from '@mui/icons-material/AccountCircleOutlined'
 import LogoutOutlinedIcon from '@mui/icons-material/LogoutOutlined'
@@ -37,16 +37,20 @@ import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined'
 import NotificationsNoneOutlinedIcon from '@mui/icons-material/NotificationsNoneOutlined'
 import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined'
 import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined'
+import CoPresentIcon from '@mui/icons-material/CoPresent'
 import { useTheme } from '@mui/material/styles'
 import { toggleTheme } from '../../features/theme/themeSlice'
 
 import { api, useGetMeQuery, useLogoutMutation, useGetAdminDashboardOverviewQuery } from '../../services/api'
+import { useGetAdminSellersQuery } from '../../services/sellerApi'
 
 import AdminOverview from './AdminOverview'
 import AdminProducts from './AdminProducts'
 import AdminManagement from './AdminManagement'
 import AdminCategories from './AdminCategories'
 import AdminOrders from './AdminOrders'
+import AdminSellers from './AdminSellers'
+import AdminCustomers from './AdminCustomers'
 
 const drawerWidth = 260
 
@@ -88,6 +92,20 @@ const sections = [
     group: 'SALES',
   },
   {
+    id: 'sellers',
+    label: 'Sellers',
+    permission: ['sellers.read', 'sellers.update'],
+    icon: CoPresentIcon,
+    group: 'PEOPLE',
+  },
+  {
+    id: 'customers',
+    label: 'Customers',
+    permission: ['customers.read'],
+    icon: PersonOutlineOutlinedIcon,
+    group: 'PEOPLE',
+  },
+  {
     id: 'admins',
     label: 'Administrator accounts',
     permission: ['admins.create'],
@@ -115,6 +133,7 @@ function getDisplayName(user) {
 function AdminNavigation({
   sections: visibleSections,
   activeSection,
+  badges = {},
   onNavigate,
   onNavigateComplete,
 }) {
@@ -125,6 +144,7 @@ function AdminNavigation({
       {visibleSections.map((section) => {
         const Icon = section.icon
         const showGroup = section.group !== previousGroup
+        const badgeCount = badges[section.id] || 0
 
         previousGroup = section.group
 
@@ -193,6 +213,26 @@ function AdminNavigation({
                 }}
               />
 
+              {badgeCount > 0 && (
+                <Box
+                  sx={{
+                    minWidth: 20,
+                    height: 20,
+                    px: 0.75,
+                    mr: activeSection === section.id ? 0.5 : 0,
+                    borderRadius: 10,
+                    bgcolor: '#EF4444',
+                    color: '#fff',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    display: 'grid',
+                    placeItems: 'center',
+                  }}
+                >
+                  {badgeCount > 99 ? '99+' : badgeCount}
+                </Box>
+              )}
+
               {activeSection === section.id && (
                 <ChevronRightOutlinedIcon
                   sx={{ fontSize: 18, opacity: 0.9 }}
@@ -210,6 +250,7 @@ function SidebarContent({
   user,
   visibleSections,
   activeSection,
+  badges,
   onNavigate,
   onNavigateComplete,
 }) {
@@ -248,7 +289,7 @@ function SidebarContent({
 
         <Box sx={{ minWidth: 0 }}>
           <Typography fontWeight={800} fontSize={15}>
-                2 Valid 
+            2 Valid
           </Typography>
           <Typography
             sx={{
@@ -267,6 +308,7 @@ function SidebarContent({
         <AdminNavigation
           sections={visibleSections}
           activeSection={activeSection}
+          badges={badges}
           onNavigate={onNavigate}
           onNavigateComplete={onNavigateComplete}
         />
@@ -388,6 +430,15 @@ export default function AdminDashboard() {
     ? sections.filter(isAllowed)
     : []
 
+  // Number of seller applications waiting for review, shown on the Sellers menu item.
+  const sellersSection = sections.find((section) => section.id === 'sellers')
+  const canSeeSellers = Boolean(user) && isAllowed(sellersSection)
+  const { data: pendingSellers } = useGetAdminSellersQuery(
+    { status: 'pending', limit: 1 },
+    { skip: !user || user.role !== 'admin' || !canSeeSellers },
+  )
+  const navBadges = { sellers: pendingSellers?.total || 0 }
+
   const activePage = visibleSections.find(
     (section) => section.id === activeSection,
   )
@@ -455,6 +506,12 @@ export default function AdminDashboard() {
       case 'orders':
         return <AdminOrders user={user} />
 
+      case 'sellers':
+        return <AdminSellers user={user} />
+
+      case 'customers':
+        return <AdminCustomers user={user} />
+
       case 'admins':
         return <AdminManagement user={user} />
 
@@ -494,6 +551,7 @@ export default function AdminDashboard() {
           user={user}
           visibleSections={visibleSections}
           activeSection={activeSection}
+          badges={navBadges}
           onNavigate={handleNavigate}
         />
       </Drawer>
@@ -518,6 +576,7 @@ export default function AdminDashboard() {
           user={user}
           visibleSections={visibleSections}
           activeSection={activeSection}
+          badges={navBadges}
           onNavigate={handleNavigate}
           onNavigateComplete={() => setMobileDrawerOpen(false)}
         />
@@ -599,6 +658,8 @@ export default function AdminDashboard() {
                 const query = event.currentTarget.value.toLowerCase()
                 if (query.includes('order') || query.includes('transaction') || query.includes('sale')) setActiveSection('orders')
                 else if (query.includes('categor')) setActiveSection('categories')
+                else if (query.includes('seller') || query.includes('shop') || query.includes('applic')) setActiveSection('sellers')
+                else if (query.includes('customer')) setActiveSection('customers')
                 else if (query.includes('admin') || query.includes('user')) setActiveSection('admins')
                 else if (query) setActiveSection('products')
               }} />

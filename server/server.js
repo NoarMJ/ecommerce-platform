@@ -20,6 +20,10 @@ const errorHandler = require('./middleware/errorHandler');
 const adminRoutes =require('./routes/adminRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
+const sellerRoutes = require('./routes/sellerRoutes');
+const adminSellerRoutes = require('./routes/adminSellerRoutes');
+const sellerProductRoutes = require('./routes/sellerProductRoutes');
+const sellerOrderRoutes = require('./routes/sellerOrderRoutes');
 
 
 const { attachSocket } = require('./socket');
@@ -94,6 +98,12 @@ app.use('/api/cart', cartRoutes);
 
 app.use('/api/admins', adminRoutes);
 app.use('/api/orders' , orderRoutes);
+
+app.use('/api/sellers', sellerRoutes);
+app.use('/api/admin/sellers', adminSellerRoutes);
+
+app.use('/api/sellers/products', sellerProductRoutes);
+app.use('/api/sellers/orders', sellerOrderRoutes);
 
 
 app.use('/api/payments', paymentRoutes);
