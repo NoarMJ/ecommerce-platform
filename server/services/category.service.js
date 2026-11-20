@@ -30,6 +30,26 @@ const getPublicCategories = () =>
 
 const getAdminCategories = () => categoryRepository.findAll();
 
+const createSellerCategory = async (sellerId, { name, description } = {}) => {
+  const cleanName = cleanText(name);
+  if (!cleanName || cleanName.length > 100) throw new AppError('Category name must be 1-100 characters.', 400);
+  const slug = cleanName.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  try {
+    return await categoryRepository.create({ name: cleanName, slug, description: cleanText(description) || '', isActive: false, approvalStatus: 'pending', createdBySellerId: sellerId });
+  } catch (error) {
+    return translateDbError(error);
+  }
+};
+
+const reviewSellerCategory = async (id, adminId, approved, reason) => {
+  assertValidId(id);
+  try {
+    return await categoryRepository.update(id, { approvalStatus: approved ? 'approved' : 'rejected', isActive: Boolean(approved), reviewedAt: new Date(), reviewedById: adminId, rejectionReason: approved ? null : (cleanText(reason) || 'Not approved') });
+  } catch (error) {
+    return translateDbError(error);
+  }
+};
+
 const createCategory = async ({ name, slug, description, image } = {}) => {
   const cleanName = cleanText(name);
   const cleanSlug = cleanText(slug)?.toLowerCase();
@@ -130,6 +150,8 @@ const activateCategory = async (id) => {
 module.exports = {
   getPublicCategories,
   getAdminCategories,
+  createSellerCategory,
+  reviewSellerCategory,
   createCategory,
   updateCategory,
   deactivateCategory,

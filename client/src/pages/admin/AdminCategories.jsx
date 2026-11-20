@@ -42,6 +42,8 @@ import {
   useUpdateCategoryMutation,
   useDeactivateCategoryMutation,
   useActivateCategoryMutation,
+  useGetPendingSellerCategoriesQuery,
+  useReviewSellerCategoryMutation,
 } from '../../services/api'
 
 const emptyForm = {
@@ -65,6 +67,8 @@ export default function AdminCategories({ user }) {
 
   const [form, setForm] = useState(emptyForm)
   const [notice, setNotice] = useState(null)
+  const { data: pendingSellerCategories = [] } = useGetPendingSellerCategoriesQuery()
+  const [reviewSellerCategory] = useReviewSellerCategoryMutation()
 
   // IMPORTANT:
   // This admin endpoint must return BOTH active and inactive categories.
@@ -336,6 +340,16 @@ export default function AdminCategories({ user }) {
 
   return (
     <Stack spacing={3}>
+      {pendingSellerCategories.length > 0 && <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="h6" gutterBottom>Seller category requests</Typography>
+        <Stack spacing={1}>
+          {pendingSellerCategories.map((category) => <Stack key={category.id} direction="row" spacing={1} alignItems="center">
+            <Typography sx={{ flexGrow: 1 }}>{category.name}</Typography>
+            <Button size="small" onClick={() => reviewSellerCategory({ id: category.id, decision: 'approve' })}>Approve</Button>
+            <Button size="small" color="error" onClick={() => reviewSellerCategory({ id: category.id, decision: 'reject', reason: 'Please choose an existing category or revise this request.' })}>Reject</Button>
+          </Stack>)}
+        </Stack>
+      </Paper>}
       {/* Page heading */}
       <Box>
         <Stack

@@ -47,6 +47,8 @@ router.patch(
   orderController.adminCancelOrder
 );
 
+router.patch('/:id/items/:itemId/cancel', requireAdmin, requirePermission('orders.update'), orderController.adminCancelItem);
+
 // ---- Customer: single order. Keep this last so it doesn't swallow the routes above ----
 router.get('/:id', orderController.getOrderById);
 

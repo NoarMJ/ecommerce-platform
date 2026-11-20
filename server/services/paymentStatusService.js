@@ -13,7 +13,11 @@ async function buildStatus(order) {
     latestPayment: payment
       ? {
           status: payment.status,
+          // Lets the page tell a timeout, cancellation, low balance or wrong PIN apart.
+          resultCode: payment.resultCode ?? undefined,
           resultDesc: payment.resultDesc ?? undefined,
+          // 2547XXXXXXXX -> 07XXXXXXXX, to prefill the next prompt.
+          phone: payment.phone ? `0${payment.phone.slice(3)}` : undefined,
           receipt: payment.mpesaReceiptNumber ?? undefined,
           reconciliationReceipt: payment.reconciliationReceipt ?? undefined,
           reconciliationStatus: payment.reconciliationStatus ?? undefined,

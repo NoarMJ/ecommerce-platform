@@ -20,6 +20,7 @@ const toOrderResponse = (order) => ({
   idempotencyKey: order.idempotencyKey,
   user: order.user ? { ...order.user, _id: order.user.id } : order.userId,
   items: order.items.map((item) => ({
+    id: item.id,
     product: item.productId,
     name: item.name,
     sku: item.sku ?? undefined,
@@ -27,6 +28,10 @@ const toOrderResponse = (order) => ({
     unitPriceMinor: item.unitPriceMinor,
     quantity: item.quantity,
     lineTotalMinor: item.lineTotalMinor,
+    sellerId: item.sellerId,
+    sellerShopNameAtPurchase: item.sellerShopNameAtPurchase,
+    fulfilmentStatus: item.fulfilmentStatus,
+    cancellationRequestReason: item.cancellationRequestReason,
   })),
   shippingAddress: {
     fullName: order.shipFullName,
@@ -52,6 +57,27 @@ const toOrderResponse = (order) => ({
   cancelledAt: order.cancelledAt ?? undefined,
   createdAt: order.createdAt,
   updatedAt: order.updatedAt,
+  payment: order.payment ? toPaymentReceipt(order.payment) : undefined,
+  // Only set on the customer's own order list.
+  paymentAction: order.paymentAction,
+  // Only set on the admin order list: paid by M-Pesa, but no receipt code on record.
+  mpesaReceiptMissing: order.mpesaReceiptMissing || undefined,
+});
+
+// 254712345678 -> 2547****5678, enough for the customer to recognise the number.
+const maskPhone = (phone) =>
+  typeof phone === 'string' && phone.length > 8
+    ? `${phone.slice(0, 4)}****${phone.slice(-4)}`
+    : phone;
+
+const toPaymentReceipt = (payment) => ({
+  // Missing when M-Pesa's status query confirmed the payment and the callback,
+  // which carries the receipt code, never arrived. The payment is still
+  // confirmed by Safaricom; only the code is unknown to us.
+  receipt: payment.mpesaReceiptNumber ?? undefined,
+  phone: maskPhone(payment.phone),
+  amountMinor: payment.amountMinor,
+  paidAt: payment.updatedAt,
 });
 
 // POST /api/orders
@@ -116,6 +142,15 @@ async function adminDashboardOverview(req, res) {
   }
 }
 
+async function adminCancelItem(req, res) {
+  try {
+    const item = await require('../services/sellerOrder.service').adminCancelItem(req.userId, req.params.itemId);
+    return res.json({ item });
+  } catch (error) {
+    return handleError(res, error, 'adminCancelItem');
+  }
+}
+
 // GET /api/orders/admin/:id
 async function adminGetOrder(req, res) {
   try {
@@ -159,6 +194,7 @@ module.exports = {
   getOrderById,
   adminListOrders,
   adminDashboardOverview,
+  adminCancelItem,
   adminGetOrder,
   adminUpdateStatus,
   adminCancelOrder,

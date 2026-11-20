@@ -2,7 +2,7 @@ const prisma = require('../config/prisma');
 
 const findAll = ({ onlyActive = false } = {}) =>
   prisma.category.findMany({
-    where: onlyActive ? { isActive: true } : {},
+    where: onlyActive ? { isActive: true, approvalStatus: 'approved' } : {},
     orderBy: { name: 'asc' },
   });
 
@@ -18,10 +18,12 @@ const countActiveByIds = (ids) =>
 const create = (data) =>
   prisma.category.create({ data });
 
+const findPending = () => prisma.category.findMany({ where: { approvalStatus: 'pending' }, orderBy: { createdAt: 'asc' } });
+
 const update = (id, data) =>
   prisma.category.update({ where: { id }, data });
 
 const remove = (id) =>
   prisma.category.delete({ where: { id } });
 
-module.exports = { findAll, findById, findBySlug, countActiveByIds, create, update, remove };
+module.exports = { findAll, findById, findBySlug, findPending, countActiveByIds, create, update, remove };

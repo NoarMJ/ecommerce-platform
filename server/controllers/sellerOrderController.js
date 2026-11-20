@@ -24,4 +24,16 @@ module.exports = {
   getOrder: respond(async (req) => ({
     order: await sellerOrderService.getMyOrder(req.seller.id, req.params.id),
   })),
+  advanceItem: respond(async (req) => ({
+    item: await sellerOrderService.advanceMyItem(req.seller.id, req.params.itemId, req.body.action),
+  })),
+  dashboard: respond(async (req) => ({
+    overview: await sellerOrderService.getDashboardOverview(req.seller.id),
+  })),
+  requestCancellation: respond(async (req) => ({
+    result: await sellerOrderService.requestMyItemCancellation(req.seller.id, req.params.itemId, req.body.reason),
+  })),
+  adminCancelItem: respond(async (req) => ({
+    item: await sellerOrderService.adminCancelItem(req.userId, req.params.itemId),
+  })),
 };

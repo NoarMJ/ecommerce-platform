@@ -18,6 +18,7 @@ router.get('/', listProducts);                       // ?isActive=&search=&page=
 router.post('/', createProduct);
 router.get('/:id', getProduct);
 router.put('/:id', updateProduct);                   // full replace of editable fields
+router.patch('/:id', updateProduct);                 // frontend partial-update alias
 router.post('/:id/deactivate', deactivateProduct);   // soft delete
 router.post('/:id/activate', activateProduct);
 

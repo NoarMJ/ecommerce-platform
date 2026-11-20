@@ -36,6 +36,7 @@ import {
   useGetAdminOrderByIdQuery,
   useUpdateOrderStatusMutation,
   useCancelOrderMutation,
+  useCancelOrderItemMutation,
 } from '../../services/api'
 import { formatPrice } from '../../utils/formatPrice'
 
@@ -76,7 +77,7 @@ const NEXT_STATUS = {
 
 const CANCELLABLE = ['pending', 'processing']
 
-const PAYMENT_METHOD_LABELS = { cash_on_delivery: 'Cash on delivery' }
+const PAYMENT_METHOD_LABELS = { cash_on_delivery: 'Cash on delivery', mpesa: 'M-Pesa' }
 
 function getErrorMessage(error) {
   return (
@@ -140,8 +141,9 @@ function OrderDetailsDialog({
     useUpdateOrderStatusMutation()
   const [cancelOrder, { isLoading: isCancelling }] =
     useCancelOrderMutation()
+  const [cancelOrderItem, { isLoading: isCancellingItem }] = useCancelOrderItemMutation()
 
-  const isBusy = isUpdating || isCancelling
+  const isBusy = isUpdating || isCancelling || isCancellingItem
   const next = order ? NEXT_STATUS[order.orderStatus] : null
   const canCancel = order && CANCELLABLE.includes(order.orderStatus)
 
@@ -310,6 +312,28 @@ function OrderDetailsDialog({
                 </Alert>
               )}
 
+              {/* M-Pesa receipt, to match the order to the M-Pesa statement */}
+              {order.payment &&
+                (order.payment.receipt ? (
+                  <Alert severity="success" icon={false}>
+                    <strong>M-Pesa receipt:</strong> {order.payment.receipt} ·{' '}
+                    {formatPrice(order.payment.amountMinor)} from {order.payment.phone}
+                  </Alert>
+                ) : (
+                  <Alert severity="warning">
+                    <strong>No M-Pesa receipt code on record.</strong> Safaricom&apos;s
+                    status check confirmed this payment of{' '}
+                    {formatPrice(order.payment.amountMinor)} from {order.payment.phone}, but
+                    the message carrying the receipt code never arrived. Find the code on
+                    the M-Pesa statement for{' '}
+                    {new Date(order.payment.paidAt).toLocaleString('en-KE', {
+                      dateStyle: 'medium',
+                      timeStyle: 'short',
+                    })}
+                    .
+                  </Alert>
+                ))}
+
               {/* Items */}
               <Paper variant="outlined" sx={{ borderRadius: 2 }}>
                 <TableContainer>
@@ -321,6 +345,8 @@ function OrderDetailsDialog({
                         <TableCell align="right">Unit price</TableCell>
                         <TableCell align="right">Qty</TableCell>
                         <TableCell align="right">Total</TableCell>
+                        <TableCell>Seller fulfilment</TableCell>
+                        <TableCell>Action</TableCell>
                       </TableRow>
                     </TableHead>
 
@@ -335,6 +361,16 @@ function OrderDetailsDialog({
                           <TableCell align="right">{item.quantity}</TableCell>
                           <TableCell align="right">
                             {formatPrice(item.lineTotalMinor)}
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2">{item.sellerShopNameAtPurchase || 'Platform'} · {item.fulfilmentStatus || order.orderStatus}</Typography>
+                            {item.cancellationRequestReason && <Typography variant="caption" color="warning.main">Cancellation requested: {item.cancellationRequestReason}</Typography>}
+                          </TableCell>
+                          <TableCell>
+                            {canUpdate && item.cancellationRequestReason && <Button size="small" color="error" disabled={isBusy} onClick={async () => {
+                              try { await cancelOrderItem({ orderId: order.id, itemId: item.id }).unwrap(); onNotice({ type: 'success', message: 'Order item cancelled and stock restored.' }); }
+                              catch (err) { onNotice({ type: 'error', message: getErrorMessage(err) }); }
+                            }}>Cancel item</Button>}
                           </TableCell>
                         </TableRow>
                       ))}
@@ -733,12 +769,17 @@ export default function AdminOrders({ user }) {
                     </TableCell>
 
                     <TableCell>
-                      <Chip
-                        label={order.paymentStatus}
-                        color={PAYMENT_COLORS[order.paymentStatus]}
-                        variant="outlined"
-                        size="small"
-                      />
+                      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                        <Chip
+                          label={order.paymentStatus}
+                          color={PAYMENT_COLORS[order.paymentStatus]}
+                          variant="outlined"
+                          size="small"
+                        />
+                        {order.mpesaReceiptMissing && (
+                          <Chip label="No receipt" color="warning" size="small" />
+                        )}
+                      </Stack>
                     </TableCell>
 
                     <TableCell>

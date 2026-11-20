@@ -37,7 +37,8 @@ module.exports = {
     product: await sellerProductService.updateMyProduct(
       req.seller.id,
       req.params.id,
-      req.body
+      req.body,
+      req.userId
     ),
   })),
   deactivateProduct: respond(async (req) => ({

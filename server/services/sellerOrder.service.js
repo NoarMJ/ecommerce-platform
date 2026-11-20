@@ -13,6 +13,8 @@ function toSellerOrderView(order) {
     0
   );
 
+  const addressReleased = order.paymentStatus === 'paid' ||
+    (order.paymentMethod === 'cash_on_delivery' && order.orderStatus !== 'pending');
   return {
     id: order.id,
     orderNumber: order.orderNumber,
@@ -23,21 +25,55 @@ function toSellerOrderView(order) {
     // Cash on delivery can be fulfilled straight away; M-Pesa only once paid.
     readyToFulfil:
       order.orderStatus !== 'cancelled' &&
-      (order.paymentMethod === 'cash_on_delivery' || order.paymentStatus === 'paid'),
-    shipping: {
-      fullName: order.shipFullName,
-      phone: order.shipPhone,
-      addressLine1: order.shipAddressLine1,
-      addressLine2: order.shipAddressLine2,
-      city: order.shipCity,
-      county: order.shipCounty,
-      postalCode: order.shipPostalCode,
-    },
-    customerNote: order.customerNote,
+      (order.paymentStatus === 'paid' || (order.paymentMethod === 'cash_on_delivery' && order.orderStatus !== 'pending')),
+    ...(addressReleased ? {
+      shipping: {
+        fullName: order.shipFullName,
+        phone: order.shipPhone,
+        addressLine1: order.shipAddressLine1,
+        addressLine2: order.shipAddressLine2,
+        city: order.shipCity,
+        county: order.shipCounty,
+        postalCode: order.shipPostalCode,
+      },
+      customerNote: order.customerNote,
+    } : { shipping: null, customerNote: null }),
     items: order.items,
     sellerSubtotalMinor,
   };
 }
+
+async function advanceMyItem(sellerId, itemId, action) {
+  const steps = {
+    approve: ['awaiting_payment', 'approved', 'approvedAt'],
+    process: ['approved', 'processed', 'processedAt'],
+    dispatch: ['processed', 'dispatched', 'dispatchedAt'],
+    deliver: ['dispatched', 'delivered', 'deliveredAt'],
+  };
+  const step = steps[action];
+  if (!step) throw new AppError('Invalid fulfilment action.', 400);
+  const updated = await sellerOrderRepository.advanceItem({
+    itemId, sellerId, from: step[0], to: step[1], timestamp: step[2],
+  });
+  if (!updated) throw new AppError('This item cannot move to that status. Check payment and current status.', 409);
+  return updated;
+}
+
+async function requestMyItemCancellation(sellerId, itemId, reason) {
+  const cleanReason = text(reason).slice(0, 500);
+  if (cleanReason.length < 3) throw new AppError('Give a short reason for the cancellation request.', 400);
+  const result = await sellerOrderRepository.requestItemCancellation({ itemId, sellerId, reason: cleanReason });
+  if (result.count !== 1) throw new AppError('This item cannot be submitted for cancellation.', 409);
+  return { requested: true };
+}
+
+async function adminCancelItem(adminId, itemId) {
+  const updated = await sellerOrderRepository.adminCancelItem({ itemId, adminId });
+  if (!updated) throw new AppError('This item cannot be cancelled.', 409);
+  return updated;
+}
+
+const getDashboardOverview = (sellerId) => sellerOrderRepository.getDashboardOverview(sellerId);
 
 async function listMyOrders(sellerId, query = {}) {
   const orderStatus = text(query.status) || undefined;
@@ -75,4 +111,4 @@ async function getMyOrder(sellerId, orderId) {
   return toSellerOrderView(order);
 }
 
-module.exports = { listMyOrders, getMyOrder, toSellerOrderView };
+module.exports = { listMyOrders, getMyOrder, advanceMyItem, requestMyItemCancellation, adminCancelItem, getDashboardOverview, toSellerOrderView };

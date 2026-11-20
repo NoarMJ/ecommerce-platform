@@ -24,13 +24,15 @@ const sellerRoutes = require('./routes/sellerRoutes');
 const adminSellerRoutes = require('./routes/adminSellerRoutes');
 const sellerProductRoutes = require('./routes/sellerProductRoutes');
 const sellerOrderRoutes = require('./routes/sellerOrderRoutes');
-
-
+const adminCustomerRoutes = require('./routes/adminCustomerRoutes');
 const { attachSocket } = require('./socket');
 
 
 const { startCartCleanup } = require('./jobs/cleanupExpiredCarts');
-
+const { startOrderExpirySweeper } = require('./jobs/expireUnpaidOrders');
+const { startStkQuerySweeper } = require('./jobs/queryPendingStkPayments');
+const { startMpesaCallbackInboxWorker } = require('./jobs/processMpesaCallbackInbox');
+const { warnIfWeakCallbackSecret } = require('./middleware/mpesaCallbackGuard');
 
 
 
@@ -105,6 +107,7 @@ app.use('/api/admin/sellers', adminSellerRoutes);
 app.use('/api/sellers/products', sellerProductRoutes);
 app.use('/api/sellers/orders', sellerOrderRoutes);
 
+app.use('/api/admin/customers', adminCustomerRoutes);
 
 app.use('/api/payments', paymentRoutes);
 
@@ -120,6 +123,10 @@ const startServer = async () => {
     server.listen(PORT, () => {
       console.log(`Server is running on http://localhost:${PORT}`);
       startCartCleanup();
+       startOrderExpirySweeper();
+       startStkQuerySweeper();
+       startMpesaCallbackInboxWorker();
+       warnIfWeakCallbackSecret();
     });
   } catch (error) {
     console.error('Failed to start server:', error.message);

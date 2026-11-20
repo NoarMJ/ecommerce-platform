@@ -770,8 +770,8 @@ export default function SellerLandingPage() {
             component="h2"
             variant="h3"
             fontWeight={900}
-            textAlign="center"
             sx={{
+              textAlign: 'center',
               fontSize: { xs: '2rem', md: '2.6rem' },
               mb: 2,
             }}
@@ -780,9 +780,8 @@ export default function SellerLandingPage() {
           </Typography>
 
           <Typography
-            textAlign="center"
             color="text.secondary"
-            sx={{ mb: 5 }}
+            sx={{ mb: 5, textAlign: 'center' }}
           >
             Everything you need to know before joining 2 Valid.
           </Typography>

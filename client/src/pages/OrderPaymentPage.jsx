@@ -17,7 +17,7 @@ import {
   useReconcileMpesaReceiptMutation,
 } from '../services/api'
 import { formatPrice } from '../utils/formatPrice'
-import { hasInitiatedPayment, shouldWaitForPayment } from '../utils/paymentStatus'
+import { hasInitiatedPayment } from '../utils/paymentStatus'
 import { usePaymentSocket } from '../hooks/usePaymentSocket'
 
 const PHONE_PATTERN = /^(?:\+?254|0)[17]\d{8}$/

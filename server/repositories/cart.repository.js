@@ -20,11 +20,39 @@ const withItems = {
   },
 };
 
+// Checkout needs the current seller approval and shop snapshot too. Load it
+// with the cart so order creation does not make a second product round trip.
+const withCheckoutItems = {
+  items: {
+    orderBy: { createdAt: 'asc' },
+    include: {
+      product: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          priceMinor: true,
+          images: true,
+          stock: true,
+          isActive: true,
+          sellerId: true,
+          seller: {
+            select: { id: true, shopName: true, status: true },
+          },
+        },
+      },
+    },
+  },
+};
+
 const findById = (id) =>
   prisma.cart.findUnique({ where: { id }, include: withItems });
 
 const findByUserId = (userId) =>
   prisma.cart.findUnique({ where: { userId }, include: withItems });
+
+const findByUserIdForCheckout = (userId) =>
+  prisma.cart.findUnique({ where: { userId }, include: withCheckoutItems });
 
 // Only guest carts that have not expired
 const findActiveGuestCart = (guestTokenHash) =>
@@ -90,6 +118,7 @@ const deleteExpiredGuestCarts = () =>
 module.exports = {
   findById,
   findByUserId,
+  findByUserIdForCheckout,
   findActiveGuestCart,
   createForUser,
   createForGuest,

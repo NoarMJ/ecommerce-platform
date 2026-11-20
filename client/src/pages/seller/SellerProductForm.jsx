@@ -6,6 +6,7 @@ import {
   useGetSellerFormCategoriesQuery,
   useGetSellerProductQuery,
   useUpdateSellerProductMutation,
+  useRequestSellerCategoryMutation,
 } from '../../services/sellerApi';
 import { apiErrorMessage, apiFieldErrors } from '../../utils/apiError';
 import { fromMinor, toMinor } from '../../utils/money';
@@ -16,6 +17,7 @@ const EMPTY = {
   description: '',
   price: '',
   stock: '0',
+  lowStockThreshold: '5',
   categoryId: '',
   categoryIds: [],
   imagesText: '',
@@ -52,10 +54,12 @@ export default function SellerProductForm() {
   const { data: categories = [], isLoading: loadingCategories } = useGetSellerFormCategoriesQuery();
   const [createProduct, createState] = useCreateSellerProductMutation();
   const [updateProduct, updateState] = useUpdateSellerProductMutation();
+  const [requestCategory, requestCategoryState] = useRequestSellerCategoryMutation();
 
   const [form, setForm] = useState(EMPTY);
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState('');
+  const [newCategoryName, setNewCategoryName] = useState('');
 
   useEffect(() => {
     if (!product) return;
@@ -64,6 +68,7 @@ export default function SellerProductForm() {
       description: product.description,
       price: fromMinor(product.priceMinor),
       stock: String(product.stock),
+      lowStockThreshold: String(product.lowStockThreshold ?? 5),
       categoryId: product.category?.id || '',
       categoryIds: (product.categories || []).map((c) => c.id),
       imagesText: (product.images || []).join('\n'),
@@ -101,6 +106,7 @@ export default function SellerProductForm() {
       description: form.description.trim(),
       priceMinor: toMinor(form.price),
       stock: Number(form.stock),
+      lowStockThreshold: Number(form.lowStockThreshold),
       images: parseImages(form.imagesText),
       categoryId: form.categoryId,
       categoryIds: form.categoryIds.filter((c) => c !== form.categoryId),
@@ -131,6 +137,7 @@ export default function SellerProductForm() {
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
           <TextField {...field('price')} label="Price (KES)" inputMode="decimal" />
           <TextField {...field('stock')} label="Stock" inputMode="numeric" />
+          <TextField {...field('lowStockThreshold')} label="Low stock alert at" inputMode="numeric" />
         </Stack>
         <TextField {...field('categoryId')} select label="Category">
           {categories.map((c) => (
@@ -139,6 +146,14 @@ export default function SellerProductForm() {
             </MenuItem>
           ))}
         </TextField>
+        <Stack direction="row" spacing={1}>
+          <TextField label="Request a new category" value={newCategoryName} onChange={(e) => setNewCategoryName(e.target.value)} fullWidth size="small" />
+          <Button disabled={!newCategoryName.trim() || requestCategoryState.isLoading} onClick={async () => {
+            try { await requestCategory({ name: newCategoryName.trim() }).unwrap(); setNewCategoryName(''); }
+            catch (err) { setFormError(apiErrorMessage(err)); }
+          }}>Request</Button>
+        </Stack>
+        <Typography variant="caption" color="text.secondary">New categories need admin approval before they can be used.</Typography>
         <TextField
           {...field('categoryIds')}
           select

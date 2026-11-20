@@ -76,6 +76,13 @@ function validateProduct(input, { withSku }) {
     data.stock = body.stock;
   }
 
+  const lowStockThreshold = body.lowStockThreshold === undefined ? 5 : body.lowStockThreshold;
+  if (!Number.isInteger(lowStockThreshold) || lowStockThreshold < 0 || lowStockThreshold > 100000) {
+    errors.lowStockThreshold = 'Low stock threshold must be a whole number from 0 to 100000.';
+  } else {
+    data.lowStockThreshold = lowStockThreshold;
+  }
+
   const rawImages = body.images === undefined ? [] : body.images;
   if (
     !Array.isArray(rawImages) ||
@@ -147,12 +154,15 @@ function toSellerProductView(product) {
     priceMinor: product.priceMinor,
     images: product.images,
     stock: product.stock,
+    lowStockThreshold: product.lowStockThreshold,
+    inventoryStatus: product.stock === 0 ? 'out_of_stock' : product.stock <= product.lowStockThreshold ? 'low_stock' : 'in_stock',
     sku: product.sku,
     isActive: product.isActive,
     category: product.category,
     categories: product.categories,
     createdAt: product.createdAt,
     updatedAt: product.updatedAt,
+    stockMovements: product.stockMovements || [],
   };
 }
 
@@ -209,7 +219,7 @@ async function createMyProduct(sellerId, input) {
   }
 }
 
-async function updateMyProduct(sellerId, id, input) {
+async function updateMyProduct(sellerId, id, input, actorId) {
   assertProductId(id);
 
   const existing = await sellerProductRepository.findOwned(id, sellerId);
@@ -219,10 +229,16 @@ async function updateMyProduct(sellerId, id, input) {
   const { data, extraCategoryIds } = validateProduct(input, { withSku: false });
   await assertCategoriesUsable([data.categoryId, ...extraCategoryIds]);
 
-  const updated = await sellerProductRepository.update(id, {
+  const updated = await sellerProductRepository.updateWithStockMovement({
+    id,
+    expectedStock: existing.stock,
+    actorId,
+    data: {
     ...data,
     categories: { set: extraCategoryIds.map((categoryId) => ({ id: categoryId })) },
+    },
   });
+  if (!updated) throw new AppError('Stock changed during your edit. Reload and try again.', 409);
 
   return toSellerProductView(updated);
 }

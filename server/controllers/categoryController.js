@@ -115,4 +115,24 @@ module.exports = {
   updateCategory,
   deleteCategory,
   activateCategory,
+  createSellerCategory: async (req, res, next) => {
+    try {
+      const category = await categoryService.createSellerCategory(req.seller.id, req.body);
+      return res.status(201).json({ status: 'success', data: withLegacyId(category) });
+    } catch (error) { return sendError(error, res, next); }
+  },
+  listPendingSellerCategories: async (req, res, next) => {
+    try {
+      const categories = await require('../repositories/category.repository').findPending();
+      return res.json({ status: 'success', data: categories.map(withLegacyId) });
+    } catch (error) { return sendError(error, res, next); }
+  },
+  reviewSellerCategory: async (req, res, next) => {
+    try {
+      const approved = req.body?.decision === 'approve';
+      if (!approved && req.body?.decision !== 'reject') return res.status(400).json({ status: 'error', message: 'decision must be approve or reject.' });
+      const category = await categoryService.reviewSellerCategory(req.params.id, req.userId, approved, req.body.reason);
+      return res.json({ status: 'success', data: withLegacyId(category) });
+    } catch (error) { return sendError(error, res, next); }
+  },
 };

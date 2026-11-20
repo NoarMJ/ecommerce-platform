@@ -68,8 +68,9 @@ const sellerApi = api.injectEndpoints({
       }),
       // Planned response: { products: [...], pagination: {...} }
       transformResponse: (response) => ({
+        ...response,
         products: response.products ?? [],
-        pagination: response.pagination ?? null,
+        pagination: response.pagination ?? { page: response.page, limit: response.limit, total: response.total, totalPages: response.totalPages },
       }),
       providesTags: (result) => [
         { type: 'SellerProduct', id: 'LIST' },
@@ -170,6 +171,10 @@ const sellerApi = api.injectEndpoints({
             : response.categories ?? response.data ?? [],
         providesTags: ['Category'],
       }),
+    requestSellerCategory: builder.mutation({
+      query: (body) => ({ url: '/sellers/categories', method: 'POST', body }),
+      invalidatesTags: ['Category'],
+    }),
 
       // PLANNED, backend route not built yet: POST /sellers/products/images
       // (FormData, same idea as your uploadProductImage). Not used by the form yet.
@@ -196,8 +201,9 @@ const sellerApi = api.injectEndpoints({
       }),
       // Planned response: { orders: [...], pagination: {...} }
       transformResponse: (response) => ({
+        ...response,
         orders: response.orders ?? [],
-        pagination: response.pagination ?? null,
+        pagination: response.pagination ?? { page: response.page, limit: response.limit, total: response.total, totalPages: response.totalPages },
       }),
       providesTags: (result) => [
         { type: 'SellerOrder', id: 'LIST' },
@@ -214,6 +220,15 @@ const sellerApi = api.injectEndpoints({
       providesTags: (_result, _error, orderId) => [
         { type: 'SellerOrder', id: orderId },
       ],
+    }),
+
+    advanceSellerOrderItem: builder.mutation({
+      query: ({ itemId, action }) => ({ url: `/sellers/orders/items/${itemId}/fulfilment`, method: 'POST', body: { action } }),
+      invalidatesTags: [{ type: 'SellerOrder', id: 'LIST' }, 'SellerOverview'],
+    }),
+    requestSellerItemCancellation: builder.mutation({
+      query: ({ itemId, reason }) => ({ url: `/sellers/orders/items/${itemId}/cancellation-request`, method: 'POST', body: { reason } }),
+      invalidatesTags: [{ type: 'SellerOrder', id: 'LIST' }],
     }),
 
          // GET /admin/sellers?status=&search=&page=&limit=
@@ -279,10 +294,13 @@ export const {
   useActivateSellerProductMutation,
   useSetSellerProductActiveMutation,
   useGetSellerFormCategoriesQuery,
+  useRequestSellerCategoryMutation,
   useUploadSellerProductImageMutation,
   // orders
   useGetSellerOrdersQuery,
   useGetSellerOrderQuery,
+  useAdvanceSellerOrderItemMutation,
+  useRequestSellerItemCancellationMutation,
   // admin
   useGetAdminSellersQuery,
   useGetAdminSellerQuery,

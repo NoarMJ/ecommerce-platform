@@ -4,6 +4,12 @@ import {
   Alert,
   Box,
   Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  List,
+  ListItem,
+  ListItemText,
   MenuItem,
   Pagination,
   Paper,
@@ -30,6 +36,7 @@ export default function SellerProducts() {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [isActive, setIsActive] = useState('');
+  const [historyProduct, setHistoryProduct] = useState(null);
 
   const { data, isLoading, isError, error } = useGetSellerProductsQuery({
     page,
@@ -101,6 +108,7 @@ export default function SellerProducts() {
                 <TableCell>SKU</TableCell>
                 <TableCell align="right">Price</TableCell>
                 <TableCell align="right">Stock</TableCell>
+                  <TableCell>Status</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
@@ -111,7 +119,15 @@ export default function SellerProducts() {
                   <TableCell>{product.name}</TableCell>
                   <TableCell>{product.sku}</TableCell>
                   <TableCell align="right">{formatMinor(product.priceMinor)}</TableCell>
-                  <TableCell align="right">{product.stock}</TableCell>
+                  <TableCell align="right">
+                    {product.stock}
+                    {product.stockMovements?.[0] && <Typography variant="caption" display="block" color="text.secondary">
+                      Latest: {product.stockMovements[0].quantityDelta > 0 ? '+' : ''}{product.stockMovements[0].quantityDelta} · {new Date(product.stockMovements[0].createdAt).toLocaleDateString()}
+                    </Typography>}
+                  </TableCell>
+                  <TableCell>
+                    {product.stock === 0 ? 'Out of stock' : product.stock <= product.lowStockThreshold ? `Low (${product.stock} left)` : 'In stock'}
+                  </TableCell>
                   <TableCell>
                     <SellerStatusChip status={product.isActive ? 'approved' : 'cancelled'} />
                   </TableCell>
@@ -127,6 +143,7 @@ export default function SellerProducts() {
                     >
                       {product.isActive ? 'Deactivate' : 'Activate'}
                     </Button>
+                    <Button size="small" onClick={() => setHistoryProduct(product)}>Stock history</Button>
                   </TableCell>
                 </TableRow>
               ))}
@@ -138,6 +155,20 @@ export default function SellerProducts() {
       {data && data.totalPages > 1 && (
         <Pagination count={data.totalPages} page={page} onChange={(e, value) => setPage(value)} />
       )}
+
+      <Dialog open={Boolean(historyProduct)} onClose={() => setHistoryProduct(null)} fullWidth maxWidth="sm">
+        <DialogTitle>Stock history · {historyProduct?.name}</DialogTitle>
+        <DialogContent dividers>
+          {(historyProduct?.stockMovements || []).length === 0 ? <Typography color="text.secondary">No stock movements recorded yet.</Typography> : <List dense>
+            {historyProduct.stockMovements.map((movement) => <ListItem key={movement.id} divider>
+              <ListItemText
+                primary={`${movement.type}: ${movement.quantityDelta > 0 ? '+' : ''}${movement.quantityDelta} units`}
+                secondary={`${movement.note || ''}${movement.note ? ' · ' : ''}${new Date(movement.createdAt).toLocaleString()}`}
+              />
+            </ListItem>)}
+          </List>}
+        </DialogContent>
+      </Dialog>
     </Stack>
   );
 }

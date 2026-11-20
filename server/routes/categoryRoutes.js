@@ -8,6 +8,8 @@ const {
   updateCategory,
   deleteCategory,
   activateCategory,
+  listPendingSellerCategories,
+  reviewSellerCategory,
 } = require('../controllers/categoryController');
 
 const requireAuth = require('../middleware/requireAuth');
@@ -26,6 +28,8 @@ router.get(
   requirePermission('categories.update'),
   getAdminCategories
 );
+router.get('/admin/pending', requireAuth, requireAdmin, requirePermission('categories.update'), listPendingSellerCategories);
+router.patch('/admin/:id/review', requireAuth, requireAdmin, requirePermission('categories.update'), reviewSellerCategory);
 
 router.patch(
   '/:id/activate',

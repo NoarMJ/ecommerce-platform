@@ -7,4 +7,11 @@ export const socket = io(SOCKET_URL, {
   transports: ['websocket'], // never fall back to HTTP long-polling
   withCredentials: true, // sends the access cookie during the handshake
   autoConnect: false,    // connected by the payment page, not on import
+  // Limit reconnection bursts so a dropped payment socket cannot churn
+  // indefinitely. The payment page also exposes a manual Reconnect action.
+  reconnection: true,
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 10000,
+  randomizationFactor: 0.5,
 })

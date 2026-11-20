@@ -191,7 +191,7 @@ export default function RegisterPage() {
             </Stack>
           </Box>
 
-          <Typography textAlign="center" color="text.secondary">
+          <Typography sx={{ textAlign: 'center' }} color="text.secondary">
             Already have an account?{' '}
             <Link component={RouterLink} to="/login" underline="hover">
               Sign in

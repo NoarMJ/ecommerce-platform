@@ -13,7 +13,7 @@ test('public product query clamps pagination and normalizes category filters', a
 
   assert.deepEqual(options, {
     page: 1, limit: 50, isActive: true, search: 'phone',
-    categorySlugs: ['mobile', 'accessories'], onlyActiveCategories: true,
+    categorySlugs: ['mobile', 'accessories'], onlyActiveCategories: true, publicOnly: true,
   });
   assert.deepEqual(result.pagination, { page: 1, limit: 50, total: 2, totalPages: 1 });
 });

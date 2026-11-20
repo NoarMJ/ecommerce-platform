@@ -12,8 +12,47 @@ import { Link } from 'react-router-dom'
 import { useGetMyOrdersQuery } from '../services/api'
 import { formatPrice } from '../utils/formatPrice'
 
+// The server decides what an unpaid M-Pesa order allows (paymentAction), using
+// the same rules it applies when a prompt is requested.
+function PaymentAction({ order }) {
+  const paymentPage = `/orders/${order._id}/payment`
+
+  switch (order.paymentAction) {
+    case 'pay':
+      return (
+        <Button component={Link} to={paymentPage} size="small" variant="contained">
+          Pay now
+        </Button>
+      )
+    case 'check':
+      return (
+        <Button component={Link} to={paymentPage} size="small" variant="outlined">
+          Check payment
+        </Button>
+      )
+    case 'review':
+      return (
+        <Typography variant="body2" color="text.secondary">
+          We are checking your payment
+        </Typography>
+      )
+    case 'expired':
+      return (
+        <Typography variant="body2" color="text.secondary">
+          Payment time ran out
+        </Typography>
+      )
+    default:
+      return null
+  }
+}
+
 export default function MyOrdersPage() {
-  const { data: orders = [], isLoading, isError } = useGetMyOrdersQuery()
+  // Payments are settled by Safaricom callbacks, not by this browser, so a
+  // cached list can be out of date. Reload it every time the page opens.
+  const { data: orders = [], isLoading, isError } = useGetMyOrdersQuery(undefined, {
+    refetchOnMountOrArgChange: true,
+  })
 
   if (isLoading) {
     return (
@@ -50,9 +89,8 @@ export default function MyOrdersPage() {
             <Paper key={order._id} variant="outlined" sx={{ p: 2.5 }}>
               <Stack
                 direction={{ xs: 'column', sm: 'row' }}
-                justifyContent="space-between"
-                alignItems={{ sm: 'center' }}
                 spacing={2}
+                sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}
               >
                 <Stack spacing={0.5}>
                   <Typography fontWeight={700}>{order.orderNumber}</Typography>
@@ -70,7 +108,7 @@ export default function MyOrdersPage() {
                   </Stack>
                 </Stack>
 
-                <Stack alignItems={{ xs: 'flex-start', sm: 'flex-end' }} spacing={1}>
+                <Stack sx={{ alignItems: { xs: 'flex-start', sm: 'flex-end' } }} spacing={1}>
                   <Typography fontWeight={700}>{formatPrice(order.totalMinor)}</Typography>
                   <Button
                     component={Link}
@@ -79,18 +117,7 @@ export default function MyOrdersPage() {
                   >
                     View details
                   </Button>
-                  {order.paymentMethod === 'mpesa' &&
-                    order.paymentStatus === 'pending' &&
-                    order.orderStatus !== 'cancelled' && (
-                        <Button
-                        component={Link}
-                        to={`/orders/${order._id}/payment`}
-                        size="small"
-                        variant="contained"
-                        >
-                        Pay now
-                        </Button>
-                    )}
+                  <PaymentAction order={order} />
                 </Stack>
               </Stack>
             </Paper>

@@ -1,9 +1,13 @@
 const prisma = require('../config/prisma');
 
+const stockReservationRepository = require('./stockReservation.repository');
+
 const orderInclude = {
   items: { orderBy: { position: 'asc' } },
   statusHistory: { orderBy: { changedAt: 'asc' } },
 };
+
+const statusSelect = { id: true, orderStatus: true, paymentStatus: true };
 
 // Admin views also include basic customer details
 const withCustomer = {
@@ -28,10 +32,20 @@ const findByIdempotencyKey = (userId, idempotencyKey) =>
     include: orderInclude,
   });
 
+// Also loads what decides whether an unpaid order can be paid right now:
+// the latest payment attempt and the stock holds.
 const findAllForUser = (userId) =>
   prisma.order.findMany({
     where: { userId },
-    include: orderInclude,
+    include: {
+      ...orderInclude,
+      payments: {
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        select: { status: true },
+      },
+      stockReservations: { select: { status: true, expiresAt: true } },
+    },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -56,7 +70,16 @@ const findPage = async ({ status, search, page, limit }) => {
     prisma.order.count({ where }),
     prisma.order.findMany({
       where,
-      include: withCustomer,
+      include: {
+        ...withCustomer,
+        // Shows staff which paid M-Pesa orders have no receipt code yet.
+        payments: {
+          where: { status: 'succeeded' },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { mpesaReceiptNumber: true },
+        },
+      },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * limit,
       take: limit,
@@ -138,22 +161,21 @@ const getDashboardOverview = async () => {
 
 // Takes stock, creates the order and empties the cart as ONE transaction.
 // If anything fails, nothing is changed.
-const createWithStockReservation = ({ orderData, lines, cartId }) =>
+const createWithStockReservation = ({ orderData, lines, cartId, holdUntil }) =>
   prisma.$transaction(
     async (tx) => {
       // Always process products in the same order, so two checkouts
       // at the same moment can never block each other forever.
-      const byProduct = [...lines].sort((a, b) =>
-        a.productId.localeCompare(b.productId)
-      );
+      const byProduct = [...lines].sort((a, b) => a.productId.localeCompare(b.productId));
 
       for (const line of byProduct) {
-        // "Reduce stock, but only if enough is left" in one step
+        // "Reduce stock, but only if enough is left and the product may still be sold", in one step.
         const result = await tx.product.updateMany({
           where: {
             id: line.productId,
             isActive: true,
             stock: { gte: line.quantity },
+            OR: [{ sellerId: null }, { seller: { status: 'approved' } }],
           },
           data: { stock: { decrement: line.quantity } },
         });
@@ -178,6 +200,8 @@ const createWithStockReservation = ({ orderData, lines, cartId }) =>
               unitPriceMinor: line.unitPriceMinor,
               quantity: line.quantity,
               lineTotalMinor: line.lineTotalMinor,
+              sellerId: line.sellerId,
+              sellerShopNameAtPurchase: line.sellerShopNameAtPurchase,
               position: index,
             })),
           },
@@ -188,6 +212,12 @@ const createWithStockReservation = ({ orderData, lines, cartId }) =>
         include: orderInclude,
       });
 
+      await stockReservationRepository.createForOrder(tx, {
+        orderId: order.id,
+        items: order.items,
+        expiresAt: holdUntil,
+      });
+
       await tx.cartItem.deleteMany({ where: { cartId } });
 
       return order;
@@ -195,9 +225,10 @@ const createWithStockReservation = ({ orderData, lines, cartId }) =>
     { maxWait: 5000, timeout: 15000 }
   );
 
+
 // Moves an order from one status to the next. Returns null if the order
 // is no longer in the expected status (someone else changed it first).
-const advanceStatus = ({ orderId, from, to, adminId, markPaid }) =>
+const advanceStatus = ({ orderId, from, to, adminId, markPaid, commitStock }) =>
   prisma.$transaction(async (tx) => {
     const result = await tx.order.updateMany({
       where: { id: orderId, orderStatus: from },
@@ -213,6 +244,10 @@ const advanceStatus = ({ orderId, from, to, adminId, markPaid }) =>
       data: { orderId, status: to, changedById: adminId },
     });
 
+    if (commitStock) {
+      await stockReservationRepository.commitForOrder(tx, orderId);
+    }
+
     return tx.order.findUnique({ where: { id: orderId }, include: orderInclude });
   });
 
@@ -222,7 +257,7 @@ const cancel = ({ orderId, adminId }) =>
   prisma.$transaction(async (tx) => {
     const result = await tx.order.updateMany({
       where: { id: orderId, orderStatus: { in: ['pending', 'processing'] } },
-      data: { orderStatus: 'cancelled', cancelledAt: new Date() },
+      data: { orderStatus: 'cancelled', cancelledAt: new Date(), cancelReason: 'admin_cancelled' },
     });
 
     if (result.count !== 1) return null;
@@ -231,18 +266,13 @@ const cancel = ({ orderId, adminId }) =>
       data: { orderId, status: 'cancelled', changedById: adminId },
     });
 
-    const order = await tx.order.findUnique({
-      where: { id: orderId },
-      include: { items: true },
+    await stockReservationRepository.giveStockBack(tx, orderId, {
+      holdStatus: 'released',
+      actorId: adminId,
+      note: 'Order cancelled by an administrator',
     });
 
-    for (const item of order.items) {
-      await tx.product.update({
-        where: { id: item.productId },
-        data: { stock: { increment: item.quantity } },
-      });
-    }
-
+    const order = await tx.order.findUnique({ where: { id: orderId } });
     if (order.paymentStatus === 'paid') {
       await tx.order.update({
         where: { id: orderId },
@@ -253,20 +283,67 @@ const cancel = ({ orderId, adminId }) =>
     return tx.order.findUnique({ where: { id: orderId }, include: orderInclude });
   });
 
-  // Only the fields the payment page needs
-const statusSelect = {
-  id: true,
-  paymentMethod: true,
-  paymentStatus: true,
-  orderStatus: true,
-};
-
 const findStatusById = (id) =>
   prisma.order.findUnique({ where: { id }, select: statusSelect });
 
 const findStatusByIdForUser = (id, userId) =>
   prisma.order.findFirst({ where: { id, userId }, select: statusSelect });
 
+const expireUnpaid = (orderId) =>
+  prisma.$transaction(async (tx) => {
+    const result = await tx.order.updateMany({
+      where: { id: orderId, orderStatus: 'pending', paymentStatus: 'pending' },
+      data: { orderStatus: 'cancelled', cancelledAt: new Date(), cancelReason: 'payment_expired' },
+    });
+
+    if (result.count !== 1) return null;
+
+    await tx.orderStatusHistory.create({ data: { orderId, status: 'cancelled' } });
+
+    await stockReservationRepository.giveStockBack(tx, orderId, {
+      holdStatus: 'expired',
+      note: 'Payment time ran out',
+    });
+
+    return true;
+  });
+
+// Unpaid orders whose hold has run out, except those where Safaricom or a person
+// still has to decide: a payment prompt younger than graceMs, or a payment marked needs_review.
+//
+// M-Pesa orders placed before stock reservations existed have no hold to run
+// out, so without the second branch they would stay unpaid forever, with a
+// "Pay now" button that can never work. They expire graceMs after being placed.
+// Their stock was taken at checkout, and expireUnpaid gives it back.
+const findExpiredUnpaidOrderIds = async (now, graceMs) => {
+  const graceStart = new Date(now.getTime() - graceMs);
+  const rows = await prisma.order.findMany({
+    where: {
+      orderStatus: 'pending',
+      paymentStatus: 'pending',
+      OR: [
+        { stockReservations: { some: { status: 'active', expiresAt: { lt: now } } } },
+        {
+          paymentMethod: 'mpesa',
+          createdAt: { lt: graceStart },
+          stockReservations: { none: {} },
+        },
+      ],
+      payments: {
+        none: {
+          OR: [
+            { status: 'needs_review' },
+            { status: 'initiated', createdAt: { gt: graceStart } },
+          ],
+        },
+      },
+    },
+    select: { id: true },
+    take: 100,
+  });
+
+  return rows.map((row) => row.id);
+};
 module.exports = {
   findById,
   findByIdForUser,
@@ -280,6 +357,8 @@ module.exports = {
   createWithStockReservation,
   advanceStatus,
   cancel,
-    findStatusById,
-    findStatusByIdForUser,
+  findStatusById,
+  findStatusByIdForUser,
+  expireUnpaid,
+  findExpiredUnpaidOrderIds,
 };

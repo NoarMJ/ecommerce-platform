@@ -268,6 +268,16 @@ activateCategory: builder.mutation({
   invalidatesTags: ['Category'],
 }),
 
+getPendingSellerCategories: builder.query({
+  query: () => '/categories/admin/pending',
+  transformResponse: (response) => response.data || [],
+  providesTags: ['Category'],
+}),
+reviewSellerCategory: builder.mutation({
+  query: ({ id, decision, reason }) => ({ url: `/categories/admin/${id}/review`, method: 'PATCH', body: { decision, reason } }),
+  invalidatesTags: ['Category'],
+}),
+
 // Place an order from the current cart.
 // The idempotencyKey stops double-clicks and retries from creating duplicate orders.
 placeOrder: builder.mutation({
@@ -334,6 +344,11 @@ cancelOrder: builder.mutation({
   invalidatesTags: ['Order', 'Product'],
 }),
 
+cancelOrderItem: builder.mutation({
+  query: ({ orderId, itemId }) => ({ url: `/orders/${orderId}/items/${itemId}/cancel`, method: 'PATCH' }),
+  invalidatesTags: ['Order', 'Product'],
+}),
+
 //pay for order
 
 // Send the M-Pesa payment prompt to the customer's phone.
@@ -345,6 +360,15 @@ payOrderWithMpesa: builder.mutation({
   }),
   // Refresh order data after a new payment prompt is accepted.
   invalidatesTags: ['Order'],
+}),
+
+// Ask M-Pesa for the prompt's result when no callback has arrived.
+// Any change reaches the payment page through the socket.
+checkMpesaPaymentStatus: builder.mutation({
+  query: (orderId) => ({
+    url: `/payments/order/${orderId}/check-status`,
+    method: 'POST',
+  }),
 }),
 
 reconcileMpesaReceipt: builder.mutation({
@@ -384,6 +408,8 @@ useUpdateCategoryMutation,
 useDeactivateCategoryMutation,
 useActivateCategoryMutation,
 useGetAdminCategoriesQuery,
+useGetPendingSellerCategoriesQuery,
+useReviewSellerCategoryMutation,
 useActivateProductMutation,
 usePlaceOrderMutation,
 useGetMyOrdersQuery,
@@ -393,6 +419,8 @@ useGetAdminDashboardOverviewQuery,
 useGetAdminOrderByIdQuery,
 useUpdateOrderStatusMutation,
 useCancelOrderMutation,
+useCancelOrderItemMutation,
 usePayOrderWithMpesaMutation,
+useCheckMpesaPaymentStatusMutation,
 useReconcileMpesaReceiptMutation,
 } = api

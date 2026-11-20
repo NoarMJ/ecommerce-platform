@@ -3,6 +3,11 @@ const prisma = require('../config/prisma');
 const PRODUCT_INCLUDE = {
   category: { select: { id: true, name: true, slug: true } },
   categories: { select: { id: true, name: true, slug: true } },
+  stockMovements: {
+    take: 100,
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, type: true, quantityDelta: true, note: true, createdAt: true },
+  },
 };
 
 // Every read/write below is scoped by sellerId, so a seller can never reach
@@ -43,13 +48,33 @@ const create = (data) => prisma.product.create({ data, include: PRODUCT_INCLUDE 
 const update = (id, data) =>
   prisma.product.update({ where: { id }, data, include: PRODUCT_INCLUDE });
 
+const updateWithStockMovement = ({ id, data, expectedStock, actorId }) =>
+  prisma.$transaction(async (tx) => {
+    const { categories, ...scalarData } = data;
+    const result = await tx.product.updateMany({ where: { id, stock: expectedStock }, data: scalarData });
+    if (result.count !== 1) return null;
+    if (scalarData.stock !== expectedStock) {
+      await tx.stockMovement.create({
+        data: {
+          productId: id,
+          type: 'adjustment',
+          quantityDelta: scalarData.stock - expectedStock,
+          actorId,
+          note: 'Seller inventory adjustment',
+        },
+      });
+    }
+    return tx.product.update({ where: { id }, data: categories ? { categories } : {}, include: PRODUCT_INCLUDE });
+  });
+
 const countActiveCategories = (ids) =>
-  prisma.category.count({ where: { id: { in: ids }, isActive: true } });
+  prisma.category.count({ where: { id: { in: ids }, isActive: true, approvalStatus: 'approved' } });
 
 module.exports = {
   listBySeller,
   findOwned,
   create,
   update,
+  updateWithStockMovement,
   countActiveCategories,
 };

@@ -166,7 +166,7 @@ export default function HomePage() {
         />
 
         <Container maxWidth="lg" sx={{ position: 'relative' }}>
-          <Grid container spacing={{ xs: 5, md: 7 }} alignItems="center">
+          <Grid container spacing={{ xs: 5, md: 7 }} sx={{ alignItems: 'center' }}>
             <Grid size={{ xs: 12, md: 7 }}>
               <Typography
                 variant="overline"
@@ -307,7 +307,7 @@ export default function HomePage() {
                       key={item.number}
                       direction="row"
                       spacing={2}
-                      alignItems="flex-start"
+                      sx={{ alignItems: 'flex-start' }}
                     >
                       <Box
                         sx={{
@@ -640,7 +640,7 @@ export default function HomePage() {
             >
               <Button
                 component={Link}
-                to="/seller"
+                to="/seller/lp"
                 variant="contained"
                 color="secondary"
                 size="large"
@@ -656,8 +656,7 @@ export default function HomePage() {
 
               <Typography
                 variant="caption"
-                textAlign="center"
-                sx={{ opacity: 0.7 }}
+                sx={{ textAlign: 'center', opacity: 0.7 }}
               >
                 Discover the seller programme
               </Typography>
