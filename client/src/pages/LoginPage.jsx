@@ -13,6 +13,7 @@ import {
   Typography,
 } from '@mui/material'
 import { useLoginMutation } from '../services/api'
+import { getLoginDestination } from '../utils/loginDestination'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -34,13 +35,17 @@ export default function LoginPage() {
     }
 
     try {
-      await login({
+      const user = await login({
         email: email.trim(),
         password,
       }).unwrap()
 
-      // Return to the page the user originally wanted to visit.
-      const destination = location.state?.from?.pathname || '/'
+      // Preserve a protected destination when present; otherwise send admins
+      // straight to their dashboard and customers to the storefront.
+      const destination = getLoginDestination(
+        user,
+        location.state?.from?.pathname,
+      )
 
       navigate(destination, { replace: true })
     } catch (error) {

@@ -1,4 +1,4 @@
-import { useState , useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import {
   Alert,
   Box,
@@ -31,6 +31,7 @@ export default function CheckoutPage() {
   const { data: user } = useGetMeQuery()
   const { data: cart, isLoading, isError } = useGetCartQuery()
   const [placeOrder, { isLoading: isPlacing }] = usePlaceOrderMutation()
+  const [payOrderWithMpesa] = usePayOrderWithMpesaMutation()
 
   // One key per visit to this page. A retry or double-click reuses it,
   // so the backend returns the same order instead of creating another.
@@ -47,17 +48,24 @@ export default function CheckoutPage() {
     customerNote: '',
   })
   const [paymentMethod, setPaymentMethod] = useState('cash_on_delivery')
+  const [mpesaPhone, setMpesaPhone] = useState('')
 
-  const [payOrderWithMpesa] = usePayOrderWithMpesaMutation()
-    const [mpesaPhone, setMpesaPhone] = useState('')
+  useEffect(() => {
+    if (!user) return
 
+    setForm((current) => ({
+      ...current,
+      fullName: current.fullName || user.name || [user.firstName, user.lastName].filter(Boolean).join(' '),
+      phone: current.phone || user.phoneNumber || '',
+    }))
+  }, [user])
 
   const [fieldErrors, setFieldErrors] = useState({})
   const [submitError, setSubmitError] = useState('')
 
+  // The ref blocks double-clicks synchronously; the state drives the UI.
   const submittingRef = useRef(false)
-    const [isSubmitting, setIsSubmitting] = useState(false)
-
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const items = cart?.items ?? cart?.data?.items ?? []
   const subtotal = items.reduce(
@@ -80,18 +88,18 @@ export default function CheckoutPage() {
     if (!form.city.trim()) errors.city = 'City is required'
     if (!form.county.trim()) errors.county = 'County is required'
     if (
-        paymentMethod === 'mpesa' &&
-        mpesaPhone.trim() &&
-        !PHONE_PATTERN.test(mpesaPhone.replace(/[\s-]/g, ''))
-        ) {
-        errors.mpesaPhone = 'Enter a valid Safaricom number, e.g. 0712345678'
-        }
+      paymentMethod === 'mpesa' &&
+      mpesaPhone.trim() &&
+      !PHONE_PATTERN.test(mpesaPhone.replace(/[\s-]/g, ''))
+    ) {
+      errors.mpesaPhone = 'Enter a valid Safaricom number, e.g. 0712345678'
+    }
     return errors
   }
 
   const handleSubmit = async (event) => {
     event.preventDefault()
-    if(submittingRef.current) return
+    if (submittingRef.current) return
     setSubmitError('')
 
     const errors = validate()
@@ -117,34 +125,37 @@ export default function CheckoutPage() {
         customerNote: form.customerNote,
       }).unwrap()
 
-        if (paymentMethod === 'mpesa') {
+      // Works whether the backend returns `_id` or `id`.
+      const orderId = order._id ?? order.id
+
+      if (paymentMethod === 'mpesa') {
+        const phone = mpesaPhone.trim() || form.phone
+
         // Send the prompt. If it fails, the payment page offers a retry.
         let promptError = ''
         try {
-            await payOrderWithMpesa({
-            orderId: order._id,
-            phone: mpesaPhone.trim() || form.phone,
-            }).unwrap()
+          await payOrderWithMpesa({ orderId, phone }).unwrap()
         } catch (error) {
-             setSubmitError(
-                error?.data?.message ?? 'We could not place your order. Please try again.'
-                      )
-                  submittingRef.current = false // unlock only when the order itself failed
-              setIsSubmitting(false)
-        
+          promptError =
+            error?.data?.message ??
+            'We could not send the M-Pesa prompt. Please try again.'
         }
 
-        navigate(`/orders/${order._id}/payment`, {
-            replace: true,
-            state: { promptError, phone: mpesaPhone.trim() || form.phone },
+        navigate(`/orders/${orderId}/payment`, {
+          replace: true,
+          state: { promptError, phone },
         })
         return
-        }
+      }
 
-navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (error) {
+      navigate(`/orders/${orderId}/confirmation`, { replace: true })
+    } catch (error) {
+      // The order itself failed, so unlock the form for another attempt.
       setSubmitError(
         error?.data?.message ?? 'We could not place your order. Please try again.'
       )
+      submittingRef.current = false
+      setIsSubmitting(false)
     }
   }
 
@@ -213,7 +224,9 @@ navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (err
                     value={form.addressLine1}
                     onChange={handleChange}
                     error={!!fieldErrors.addressLine1}
-                    helperText={fieldErrors.addressLine1 ?? 'House number, street or building'}
+                    helperText={
+                      fieldErrors.addressLine1 ?? 'House number, street or building'
+                    }
                     required
                     fullWidth
                   />
@@ -268,50 +281,49 @@ navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (err
 
               <Paper variant="outlined" sx={{ p: 3 }}>
                 <Typography variant="h6" sx={{ mb: 1 }}>
-                    Payment method
+                  Payment method
                 </Typography>
 
                 <RadioGroup
-                    value={paymentMethod}
-                    onChange={(event) => setPaymentMethod(event.target.value)}
+                  value={paymentMethod}
+                  onChange={(event) => setPaymentMethod(event.target.value)}
                 >
-                    <FormControlLabel
+                  <FormControlLabel
                     value="mpesa"
                     control={<Radio />}
                     label="M-Pesa (pay now on your phone)"
-                    />
-                    <FormControlLabel
+                  />
+                  <FormControlLabel
                     value="cash_on_delivery"
                     control={<Radio />}
                     label="Cash on delivery"
-                    />
+                  />
                 </RadioGroup>
 
                 {paymentMethod === 'mpesa' ? (
-                    <Stack spacing={1.5} sx={{ mt: 2 }}>
+                  <Stack spacing={1.5} sx={{ mt: 2 }}>
                     <TextField
-                        label="M-Pesa phone number"
-                        value={mpesaPhone}
-                        onChange={(event) => {
+                      label="M-Pesa phone number"
+                      value={mpesaPhone}
+                      onChange={(event) => {
                         setMpesaPhone(event.target.value)
                         setFieldErrors((prev) => ({ ...prev, mpesaPhone: undefined }))
-                        }}
-                        error={!!fieldErrors.mpesaPhone}
-                        helperText={
+                      }}
+                      error={!!fieldErrors.mpesaPhone}
+                      helperText={
                         fieldErrors.mpesaPhone ??
                         'Leave empty to use the delivery phone number. A payment prompt will be sent to this number.'
-                        }
-                        placeholder="0712345678"
-                        fullWidth
+                      }
+                      placeholder="0712345678"
+                      fullWidth
                     />
-                    </Stack>
+                  </Stack>
                 ) : (
-                    <Typography variant="caption" color="text.secondary">
+                  <Typography variant="caption" color="text.secondary">
                     You pay when your order arrives.
-                    </Typography>
+                  </Typography>
                 )}
-                </Paper>
-
+              </Paper>
             </Stack>
           </Box>
         </Grid>
@@ -326,7 +338,7 @@ navigate(`/orders/${order._id}/confirmation`, { replace: true })    } catch (err
             <Stack spacing={1.5}>
               {items.map((item) => (
                 <Stack
-                  key={item.product?._id}
+                  key={item.product?._id ?? item.product?.id}
                   direction="row"
                   justifyContent="space-between"
                   spacing={2}

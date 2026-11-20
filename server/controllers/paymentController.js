@@ -1,59 +1,49 @@
-const mongoose = require('mongoose');
-const Order = require('../models/order');
-const Payment = require('../models/payment');
+const paymentService = require('../services/payment.service');
 const mpesaService = require('../services/mpesaService');
+const { getPaymentStatusForUser } = require('../services/paymentStatusService');
+
+function handleError(res, error, label) {
+  if (error.isAppError) {
+    return res.status(error.statusCode).json({ message: error.message });
+  }
+
+  console.error(`${label}:`, error);
+  return res
+    .status(500)
+    .json({ message: 'Something went wrong. Please try again.' });
+}
 
 // POST /api/payments/stk-push   body: { orderId, phone }
 async function startMpesaPayment(req, res) {
   try {
     const { orderId, phone } = req.body ?? {};
 
-    if (!mongoose.isValidObjectId(orderId)) {
-      return res.status(404).json({ message: 'Order not found.' });
-    }
-
-    // The order must belong to the logged-in customer.
-    const order = await Order.findOne({ _id: orderId, user: req.session.userId });
-    if (!order) {
-      return res.status(404).json({ message: 'Order not found.' });
-    }
-
-    if (
-      order.paymentMethod !== 'mpesa' ||
-      order.paymentStatus !== 'pending' ||
-      order.orderStatus !== 'pending'
-    ) {
-      return res.status(409).json({ message: 'This order cannot be paid with M-Pesa.' });
-    }
-
-    // Don't fire a second prompt while one is still waiting.
-    const recent = await Payment.findOne({
-      order: order._id,
-      status: 'initiated',
-      createdAt: { $gt: new Date(Date.now() - 2 * 60 * 1000) },
-    });
-    if (recent) {
-      return res.status(409).json({
-        message: 'A payment prompt was already sent. Check your phone.',
-      });
-    }
-
-    const payment = await mpesaService.initiateStkPush({
-      order,
-      userId: req.session.userId,
+    const payment = await paymentService.startMpesaPayment({
+      orderId,
+      userId: req.userId,
       phone,
     });
 
     return res.status(202).json({
       message: 'Check your phone and enter your M-Pesa PIN.',
-      paymentId: payment._id,
+      paymentId: payment.id,
     });
   } catch (error) {
-    if (error.status) {
-      return res.status(error.status).json({ message: error.message });
-    }
-    console.error('startMpesaPayment:', error);
-    return res.status(500).json({ message: 'Something went wrong. Please try again.' });
+    return handleError(res, error, 'startMpesaPayment');
+  }
+}
+
+// POST /api/payments/reconcile-receipt { orderId, receipt }
+async function reconcilePaymentReceipt(req, res) {
+  try {
+    const result = await paymentService.reconcileMpesaPayment({
+      orderId: req.body?.orderId,
+      userId: req.userId,
+      receipt: req.body?.receipt,
+    });
+    return res.status(202).json(result);
+  } catch (error) {
+    return handleError(res, error, 'reconcilePaymentReceipt');
   }
 }
 
@@ -74,41 +64,49 @@ async function mpesaCallback(req, res) {
   return res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
 }
 
+async function transactionStatusCallback(req, res) {
+  if (req.params.secret !== process.env.MPESA_CALLBACK_SECRET) return res.status(404).end();
+  try {
+    await mpesaService.handleTransactionStatusCallback(req.body);
+  } catch (error) {
+    console.error('transactionStatusCallback:', error);
+  }
+  return res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+}
+
+async function transactionStatusTimeout(req, res) {
+  if (req.params.secret !== process.env.MPESA_CALLBACK_SECRET) return res.status(404).end();
+  try {
+    await mpesaService.handleTransactionStatusTimeout(req.body);
+  } catch (error) {
+    console.error('transactionStatusTimeout:', error);
+  }
+  return res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+}
+
 // GET /api/payments/order/:orderId/status
 async function getOrderPaymentStatus(req, res) {
   try {
-    const { orderId } = req.params;
+    const status = await getPaymentStatusForUser(
+      req.params.orderId,
+      req.userId
+    );
 
-    if (!mongoose.isValidObjectId(orderId)) {
+    if (!status) {
       return res.status(404).json({ message: 'Order not found.' });
     }
 
-    const order = await Order.findOne({ _id: orderId, user: req.session.userId });
-    if (!order) {
-      return res.status(404).json({ message: 'Order not found.' });
-    }
-
-    const payment = await Payment.findOne({ order: order._id })
-      .sort({ createdAt: -1 })
-      .select('status resultDesc mpesaReceiptNumber createdAt');
-
-    return res.json({
-      paymentMethod: order.paymentMethod,
-      paymentStatus: order.paymentStatus,
-      orderStatus: order.orderStatus,
-      latestPayment: payment
-        ? {
-            status: payment.status,
-            resultDesc: payment.resultDesc,
-            receipt: payment.mpesaReceiptNumber,
-            startedAt: payment.createdAt,
-          }
-        : null,
-    });
+    return res.json(status);
   } catch (error) {
-    console.error('getOrderPaymentStatus:', error);
-    return res.status(500).json({ message: 'Something went wrong. Please try again.' });
+    return handleError(res, error, 'getOrderPaymentStatus');
   }
 }
 
-module.exports = { startMpesaPayment, mpesaCallback, getOrderPaymentStatus };
+module.exports = {
+  startMpesaPayment,
+  reconcilePaymentReceipt,
+  mpesaCallback,
+  transactionStatusCallback,
+  transactionStatusTimeout,
+  getOrderPaymentStatus,
+};

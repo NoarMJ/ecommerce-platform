@@ -1,6 +1,6 @@
 
 import { useState } from 'react'
-import { Link as RouterLink } from 'react-router-dom'
+import { Link as RouterLink, useNavigate } from 'react-router-dom'
 import {
   Alert,
   Box,
@@ -12,10 +12,12 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
-import { useRegisterMutation } from '../services/api'
+import { useLoginMutation, useRegisterMutation } from '../services/api'
 
 export default function RegisterPage() {
+  const navigate = useNavigate()
   const [register, { isLoading }] = useRegisterMutation()
+  const [login, { isLoading: isLoggingIn }] = useLoginMutation()
 
   const [form, setForm] = useState({
     firstName: '',
@@ -58,31 +60,21 @@ export default function RegisterPage() {
     }
 
     try {
+      const email = form.email.trim()
       await register({
         ...form,
         firstName: form.firstName.trim(),
         lastName: form.lastName.trim(),
-        email: form.email.trim(),
+        email,
         phoneNumber: form.phoneNumber.trim(),
       }).unwrap()
 
-      setSuccessMessage(
-        'Your account has been created. You can now sign in.',
-      )
+      await login({ email, password: form.password }).unwrap()
 
-      setForm({
-        firstName: '',
-        lastName: '',
-        email: '',
-        phoneNumber: '',
-        password: '',
-      })
+      navigate('/checkout', { replace: true })
     } catch (error) {
-      setErrorMessage(
-        error?.data?.message ||
-          error?.data?.error?.message ||
-          'Unable to create your account. Please try again.',
-      )
+      setErrorMessage(error?.data?.message || error?.data?.error?.message ||
+        'Account creation or automatic sign-in failed. Please try again or sign in.')
     }
   }
 
@@ -191,10 +183,10 @@ export default function RegisterPage() {
                 type="submit"
                 variant="contained"
                 size="large"
-                disabled={isLoading}
+                disabled={isLoading || isLoggingIn}
                 fullWidth
               >
-                {isLoading ? 'Creating account…' : 'Create account'}
+                {isLoading || isLoggingIn ? 'Creating account…' : 'Create account'}
               </Button>
             </Stack>
           </Box>

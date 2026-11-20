@@ -1,18 +1,17 @@
-
-const User = require('../models/user');
+const authService = require('../services/auth.service');
 
 const requireAdmin = async (req, res, next) => {
   try {
-    if (!req.session || !req.session.userId) {
+    if (!req.userId) {
       return res.status(401).json({
         status: 'error',
         message: 'Authentication required. Please log in.',
       });
     }
 
-    const user = await User.findById(req.session.userId);
+    const user = await authService.getActiveUser(req.userId);
 
-    if (!user || !user.isActive) {
+    if (!user) {
       return res.status(401).json({
         status: 'error',
         message: 'Your session is no longer valid.',

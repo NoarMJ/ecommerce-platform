@@ -1,7 +1,10 @@
 const express = require('express');
+const optionalAuth = require('../middleware/optionalAuth');
 const { getCart ,addCartItem , updateCartItemQuantity, removeCartItemFromCart  , clearCartContents} =  require('../controllers/cartController');
 
 const router = express.Router();
+
+router.use(optionalAuth);
 
 
 

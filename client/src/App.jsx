@@ -19,6 +19,17 @@ import CheckoutPage from './pages/CheckoutPage'
 import OrderConfirmationPage from './pages/OrderConfirmationPage'
 import MyOrdersPage from './pages/MyOrdersPage'
 import OrderPaymentPage from './pages/OrderPaymentPage'
+import SellerOverview from './pages/seller/SellerOverview'
+import SellerDashboardLayout from './pages/seller/SellerDashboardLayout'
+import { Navigate } from 'react-router-dom'
+import SellerApplicationPage from './pages/seller/SellerApplicationPage'
+import SellerLandingPage from './pages/seller/SellerLandingPage'
+import SellerApplicationStatus from './pages/seller/SellerApplicationStatus'
+import SellerProducts from './pages/seller/SellerProducts'
+import SellerProductForm from './pages/seller/SellerProductForm'
+import SellerOrders from './pages/seller/SellerOrders'
+import SellerProfile from './pages/seller/SellerProfile'
+
 
 function CustomerLayout({ children }) {
   return (
@@ -142,6 +153,63 @@ export default function App() {
           </RequireAuth>
         }
       />
+{/*seller experience  */}
+
+      <Route
+        path="/seller"
+        element={
+          <RequireAuth>
+            <SellerDashboardLayout />
+          </RequireAuth>
+        }
+      >
+        <Route index element={<Navigate to="overview" replace />} />
+        <Route path="overview" element={<SellerOverview />} />
+        <Route path="products" element={<SellerProducts />} />
+        <Route path="products/new" element={<SellerProductForm />} />
+        <Route path="products/:id/edit" element={<SellerProductForm />} />
+        <Route path="orders" element={<SellerOrders />} />
+        <Route path="profile" element={<SellerProfile />} />
+      </Route>
+
+      <Route
+        path="/seller/dashboard"
+        element={
+          <RequireAuth>
+            <Navigate to="/seller" replace />
+          </RequireAuth>
+        }
+      />
+
+      <Route
+        path="/seller/apply"
+        element={
+          <RequireAuth>
+            <CustomerLayout>
+              <SellerApplicationPage />
+            </CustomerLayout>
+          </RequireAuth>
+        }
+      />
+
+      <Route path="/seller/lp" element={<SellerLandingPage />} />
+
+      <Route
+        path="/sellers/products"
+        element={<Navigate to="/seller/products" replace />}
+      />
+
+      <Route
+        path="/seller/application-status"
+        element={
+          <RequireAuth>
+            <SellerApplicationStatus />
+          </RequireAuth>
+        }
+      />
+      
     </Routes>
+
+    
   )
 }
