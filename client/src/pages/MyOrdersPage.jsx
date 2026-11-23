@@ -11,6 +11,7 @@ import {
 import { Link } from 'react-router-dom'
 import { useGetMyOrdersQuery } from '../services/api'
 import { formatPrice } from '../utils/formatPrice'
+import OrderFulfilmentList from '../components/OrderFulfilmentList'
 
 export default function MyOrdersPage() {
   const { data: orders = [], isLoading, isError } = useGetMyOrdersQuery()
@@ -68,6 +69,10 @@ export default function MyOrdersPage() {
                     <Chip label={order.orderStatus} color="primary" size="small" />
                     <Chip label={`Payment: ${order.paymentStatus}`} size="small" variant="outlined" />
                   </Stack>
+                  {/* Only shown when more than one shop is involved */}
+                  {order.fulfilments?.length > 1 && order.orderStatus !== 'cancelled' && (
+                    <OrderFulfilmentList fulfilments={order.fulfilments} compact />
+                  )}
                 </Stack>
 
                 <Stack alignItems={{ xs: 'flex-start', sm: 'flex-end' }} spacing={1}>

@@ -6,6 +6,7 @@ import {
   Button,
   CircularProgress,
   Divider,
+  IconButton,
   List,
   ListItemButton,
   ListItemIcon,
@@ -14,7 +15,12 @@ import {
   Stack,
   Typography,
   Chip,
+  Tooltip,
 } from '@mui/material';
+import { useDispatch, useSelector } from 'react-redux';
+import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
+import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
+import { toggleTheme } from '../../features/theme/themeSlice';
 
 import DashboardOutlinedIcon from '@mui/icons-material/DashboardOutlined';
 import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined';
@@ -200,6 +206,10 @@ function SellerNavigation({ mobile = false }) {
 }
 
 export default function SellerDashboardLayout() {
+  const dispatch = useDispatch();
+  const themeMode = useSelector((state) => state.theme.mode);
+  const nextMode = themeMode === 'light' ? 'dark' : 'light';
+
   const {
     data: seller,
     isLoading,
@@ -425,6 +435,21 @@ export default function SellerDashboardLayout() {
             </Box>
           </Stack>
 
+          <Stack direction="row" spacing={1} alignItems="center">
+          <Tooltip title={`Switch to ${nextMode} mode`}>
+            <IconButton
+              onClick={() => dispatch(toggleTheme())}
+              aria-label={`Switch to ${nextMode} mode`}
+              sx={{ border: 1, borderColor: 'divider', borderRadius: 2 }}
+            >
+              {themeMode === 'light' ? (
+                <DarkModeOutlinedIcon fontSize="small" />
+              ) : (
+                <LightModeOutlinedIcon fontSize="small" />
+              )}
+            </IconButton>
+          </Tooltip>
+
           <Button
             component={RouterLink}
             to="/"
@@ -440,6 +465,7 @@ export default function SellerDashboardLayout() {
               Shop
             </Box>
           </Button>
+          </Stack>
         </Box>
       </Box>
 

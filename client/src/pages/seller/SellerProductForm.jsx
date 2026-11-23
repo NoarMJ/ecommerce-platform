@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link as RouterLink, useNavigate, useParams } from 'react-router-dom';
-import { Alert, Button, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Button, InputAdornment, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material';
+import InventoryOutlinedIcon from '@mui/icons-material/InventoryOutlined';
 import {
   useCreateSellerProductMutation,
   useGetSellerFormCategoriesQuery,
@@ -10,6 +11,7 @@ import {
 import { apiErrorMessage, apiFieldErrors } from '../../utils/apiError';
 import { fromMinor, toMinor } from '../../utils/money';
 import PageSpinner from '../../components/seller/PageSpinner';
+import UpdateStockDialog from '../../components/seller/UpdateStockDialog';
 
 const EMPTY = {
   name: '',
@@ -28,12 +30,12 @@ const parseImages = (text) =>
     .map((line) => line.trim())
     .filter(Boolean);
 
-function validate(form) {
+function validate(form, isEdit) {
   const errors = {};
   if (form.name.trim().length < 2) errors.name = 'Enter a product name.';
   if (!form.description.trim()) errors.description = 'Enter a description.';
   if (toMinor(form.price) === null) errors.price = 'Enter a price greater than 0.';
-  if (!/^\d+$/.test(form.stock.trim())) errors.stock = 'Stock must be a whole number (0 or more).';
+  if (!isEdit && !/^\d+$/.test(form.stock.trim())) errors.stock = 'Stock must be a whole number (0 or more).';
   if (!form.categoryId) errors.categoryId = 'Choose a category.';
   if (parseImages(form.imagesText).some((url) => !/^https:\/\//i.test(url))) {
     errors.images = 'Each image must be an https:// URL, one per line.';
@@ -56,9 +58,14 @@ export default function SellerProductForm() {
   const [form, setForm] = useState(EMPTY);
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState('');
+  const [stockOpen, setStockOpen] = useState(false);
 
+  // Fill the form once per product. Later refetches (e.g. after a stock
+  // update) must not wipe changes the seller hasn't saved yet.
+  const [filledFor, setFilledFor] = useState(null);
   useEffect(() => {
-    if (!product) return;
+    if (!product || filledFor === product.id) return;
+    setFilledFor(product.id);
     setForm({
       name: product.name,
       description: product.description,
@@ -69,7 +76,7 @@ export default function SellerProductForm() {
       imagesText: (product.images || []).join('\n'),
       sku: product.sku,
     });
-  }, [product]);
+  }, [product, filledFor]);
 
   if ((isEdit && loadingProduct) || loadingCategories) return <PageSpinner />;
   if (isEdit && productError) {
@@ -92,7 +99,7 @@ export default function SellerProductForm() {
   const submit = async (e) => {
     e.preventDefault();
     setFormError('');
-    const found = validate(form);
+    const found = validate(form, isEdit);
     setErrors(found);
     if (Object.keys(found).length > 0) return;
 
@@ -100,7 +107,8 @@ export default function SellerProductForm() {
       name: form.name.trim(),
       description: form.description.trim(),
       priceMinor: toMinor(form.price),
-      stock: Number(form.stock),
+      // Stock is only sent when creating. After that it changes through the stock dialog.
+      ...(!isEdit ? { stock: Number(form.stock) } : {}),
       images: parseImages(form.imagesText),
       categoryId: form.categoryId,
       categoryIds: form.categoryIds.filter((c) => c !== form.categoryId),
@@ -130,7 +138,33 @@ export default function SellerProductForm() {
         <TextField {...field('description')} label="Description" multiline minRows={3} />
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
           <TextField {...field('price')} label="Price (KES)" inputMode="decimal" />
-          <TextField {...field('stock')} label="Stock" inputMode="numeric" />
+          {isEdit ? (
+            <TextField
+              label="Stock"
+              value={product?.stock ?? 0}
+              fullWidth
+              helperText="Use Update stock so units in customer orders are never overwritten."
+              slotProps={{
+                input: {
+                  readOnly: true,
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <Button
+                        size="small"
+                        startIcon={<InventoryOutlinedIcon />}
+                        onClick={() => setStockOpen(true)}
+                        sx={{ textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap' }}
+                      >
+                        Update stock
+                      </Button>
+                    </InputAdornment>
+                  ),
+                },
+              }}
+            />
+          ) : (
+            <TextField {...field('stock')} label="Initial stock" inputMode="numeric" />
+          )}
         </Stack>
         <TextField {...field('categoryId')} select label="Category">
           {categories.map((c) => (
@@ -177,6 +211,10 @@ export default function SellerProductForm() {
           </Button>
         </Stack>
       </Stack>
+
+      {isEdit && (
+        <UpdateStockDialog open={stockOpen} onClose={() => setStockOpen(false)} product={product} />
+      )}
     </Paper>
   );
 }

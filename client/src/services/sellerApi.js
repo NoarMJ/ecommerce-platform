@@ -48,9 +48,10 @@ const sellerApi = api.injectEndpoints({
       invalidatesTags: ['Seller'],
     }),
 
-    // Planned backend route: GET /api/sellers/dashboard/overview
+    // GET /api/sellers/orders/overview
+    // Server response: { overview: { summary, weeklySales, counts, recentOrders, topProducts } }
     getSellerDashboardOverview: builder.query({
-      query: () => '/sellers/dashboard/overview',
+      query: () => '/sellers/orders/overview',
       transformResponse: (response) => response.overview,
       providesTags: ['SellerOverview'],
     }),
@@ -66,10 +67,10 @@ const sellerApi = api.injectEndpoints({
         url: '/sellers/products',
         params,
       }),
-      // Planned response: { products: [...], pagination: {...} }
+      // Server response: { products, page, limit, total, totalPages }
       transformResponse: (response) => ({
+        ...response,
         products: response.products ?? [],
-        pagination: response.pagination ?? null,
       }),
       providesTags: (result) => [
         { type: 'SellerProduct', id: 'LIST' },
@@ -101,18 +102,48 @@ const sellerApi = api.injectEndpoints({
       ],
     }),
 
+    // PUT /api/sellers/products/:id  (the form passes `id`; `productId` also accepted)
+    // Stock is not editable here; use adjustSellerProductStock.
     updateSellerProduct: builder.mutation({
-      query: ({ productId, ...changes }) => ({
-        url: `/sellers/products/${productId}`,
-        method: 'PATCH',
+      query: ({ id, productId, ...changes }) => ({
+        url: `/sellers/products/${id ?? productId}`,
+        method: 'PUT',
         body: changes,
       }),
       transformResponse: (response) => response.product,
-      invalidatesTags: (_result, _error, { productId }) => [
-        { type: 'SellerProduct', id: productId },
+      invalidatesTags: (_result, _error, { id, productId }) => [
+        { type: 'SellerProduct', id: id ?? productId },
         { type: 'SellerProduct', id: 'LIST' },
         'SellerOverview',
+        'Product',
       ],
+    }),
+
+    // POST /api/sellers/products/:id/stock  body: { type, change, reason }
+    // change is signed: +20 received, -3 damaged, etc.
+    adjustSellerProductStock: builder.mutation({
+      query: ({ id, ...adjustment }) => ({
+        url: `/sellers/products/${id}/stock`,
+        method: 'POST',
+        body: adjustment,
+      }),
+      transformResponse: (response) => response.product,
+      invalidatesTags: (_result, _error, { id }) => [
+        { type: 'SellerProduct', id },
+        { type: 'SellerProduct', id: 'LIST' },
+        { type: 'SellerStockHistory', id },
+        'SellerOverview',
+        'Product',
+      ],
+    }),
+
+    // GET /api/sellers/products/:id/stock-history?page=&limit=
+    getSellerProductStockHistory: builder.query({
+      query: ({ id, ...params }) => ({
+        url: `/sellers/products/${id}/stock-history`,
+        params,
+      }),
+      providesTags: (_result, _error, { id }) => [{ type: 'SellerStockHistory', id }],
     }),
 
     deactivateSellerProduct: builder.mutation({
@@ -194,10 +225,10 @@ const sellerApi = api.injectEndpoints({
         url: '/sellers/orders',
         params,
       }),
-      // Planned response: { orders: [...], pagination: {...} }
+      // Server response: { orders, page, limit, total, totalPages }
       transformResponse: (response) => ({
+        ...response,
         orders: response.orders ?? [],
-        pagination: response.pagination ?? null,
       }),
       providesTags: (result) => [
         { type: 'SellerOrder', id: 'LIST' },
@@ -213,6 +244,23 @@ const sellerApi = api.injectEndpoints({
       transformResponse: (response) => response.order,
       providesTags: (_result, _error, orderId) => [
         { type: 'SellerOrder', id: orderId },
+      ],
+    }),
+
+    // POST /api/sellers/orders/:id/fulfilment
+    // body: { status: 'processing' | 'shipped', courier?, trackingNumber?, note? }
+    updateSellerFulfilment: builder.mutation({
+      query: ({ id, ...body }) => ({
+        url: `/sellers/orders/${id}/fulfilment`,
+        method: 'POST',
+        body,
+      }),
+      transformResponse: (response) => response.order,
+      invalidatesTags: (_result, _error, { id }) => [
+        { type: 'SellerOrder', id },
+        { type: 'SellerOrder', id: 'LIST' },
+        'SellerOverview',
+        'Order',
       ],
     }),
 
@@ -275,6 +323,8 @@ export const {
   useGetSellerProductQuery,
   useCreateSellerProductMutation,
   useUpdateSellerProductMutation,
+  useAdjustSellerProductStockMutation,
+  useGetSellerProductStockHistoryQuery,
   useDeactivateSellerProductMutation,
   useActivateSellerProductMutation,
   useSetSellerProductActiveMutation,
@@ -283,6 +333,7 @@ export const {
   // orders
   useGetSellerOrdersQuery,
   useGetSellerOrderQuery,
+  useUpdateSellerFulfilmentMutation,
   // admin
   useGetAdminSellersQuery,
   useGetAdminSellerQuery,

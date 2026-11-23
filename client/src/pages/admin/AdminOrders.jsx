@@ -38,6 +38,7 @@ import {
   useCancelOrderMutation,
 } from '../../services/api'
 import { formatPrice } from '../../utils/formatPrice'
+import OrderFulfilmentList from '../../components/OrderFulfilmentList'
 
 // ---------------------------------------------------------
 // Constants and helpers
@@ -363,6 +364,9 @@ function OrderDetailsDialog({
                   </Stack>
                 </Stack>
               </Paper>
+
+              {/* Each seller's progress on their items */}
+              <OrderFulfilmentList fulfilments={order.fulfilments} title="Seller fulfilment" />
 
               {/* History */}
               {order.statusHistory?.length > 0 && (
