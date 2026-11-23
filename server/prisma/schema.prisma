@@ -62,6 +62,8 @@ model User {
   payments      Payment[]
   sellerProfile SellerProfile?       @relation("SellerOwner")
   sellerReviews SellerProfile[]      @relation("SellerReviewer")
+  stockMovements InventoryMovement[]  @relation("InventoryMovementActor")
+  fulfilmentChanges SellerFulfilmentHistory[] @relation("FulfilmentActor")
 
   @@map("users")
 }
@@ -89,6 +91,8 @@ model SellerProfile {
 
   products   Product[]
   orderItems OrderItem[]
+  stockMovements InventoryMovement[]
+  fulfilments    SellerFulfilment[]
 
   @@index([status, submittedAt])
   @@index([reviewedById])
@@ -117,6 +121,7 @@ model Product {
 
   cartItems  CartItem[]
   orderItems OrderItem[]
+  stockMovements InventoryMovement[]
 
   @@index([categoryId])
   @@index([sellerId])
@@ -204,6 +209,8 @@ model Order {
   items         OrderItem[]
   statusHistory OrderStatusHistory[]
   payments      Payment[]
+  stockMovements InventoryMovement[]
+  fulfilments    SellerFulfilment[]
 
   @@unique([userId, idempotencyKey])
   @@index([userId])
@@ -304,4 +311,86 @@ model PaymentReceiptVerification {
 
   @@index([paymentId, createdAt])
   @@map("payment_receipt_verifications")
+}
+
+// Every stock change is recorded here. Product.stock stays the live number;
+// this table explains how it got there.
+enum InventoryMovementType {
+  initial         // stock entered when the product was created
+  received        // seller received new units (+)
+  removed         // returned to supplier, personal use, etc. (-)
+  damaged         // damaged, lost or stolen (-)
+  correction      // stock count correction (+ or -), incl. admin edits
+  order           // customer order took stock (-)
+  order_cancelled // cancelled order put stock back (+)
+}
+
+model InventoryMovement {
+  id             String                @id @default(uuid()) @db.Uuid
+  productId      String                @db.Uuid
+  sellerId       String?               @db.Uuid
+  type           InventoryMovementType
+  quantityChange Int
+  stockBefore    Int
+  stockAfter     Int
+  reason         String?               @db.VarChar(200)
+  orderId        String?               @db.Uuid
+  createdById    String?               @db.Uuid
+  createdAt      DateTime              @default(now())
+
+  product   Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+  seller    SellerProfile? @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  order     Order?         @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  createdBy User?          @relation("InventoryMovementActor", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([productId, createdAt])
+  @@index([sellerId])
+  @@index([orderId])
+  @@map("inventory_movements")
+}
+
+// Each seller fulfils their own part of an order. Order.orderStatus is the
+// overall status; it moves forward automatically as sellers progress.
+enum FulfilmentStatus {
+  pending
+  processing
+  shipped
+  delivered
+  cancelled
+}
+
+model SellerFulfilment {
+  id             String           @id @default(uuid()) @db.Uuid
+  orderId        String           @db.Uuid
+  sellerId       String           @db.Uuid
+  status         FulfilmentStatus @default(pending)
+  courier        String?          @db.VarChar(80)
+  trackingNumber String?          @db.VarChar(80)
+  shippedAt      DateTime?
+  deliveredAt    DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  order   Order                     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  seller  SellerProfile             @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  history SellerFulfilmentHistory[]
+
+  @@unique([orderId, sellerId])
+  @@index([sellerId, status])
+  @@map("seller_fulfilments")
+}
+
+model SellerFulfilmentHistory {
+  id           String           @id @default(uuid()) @db.Uuid
+  fulfilmentId String           @db.Uuid
+  status       FulfilmentStatus
+  note         String?          @db.VarChar(200)
+  changedById  String?          @db.Uuid
+  changedAt    DateTime         @default(now())
+
+  fulfilment SellerFulfilment @relation(fields: [fulfilmentId], references: [id], onDelete: Cascade)
+  changedBy  User?            @relation("FulfilmentActor", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([fulfilmentId, changedAt])
+  @@map("seller_fulfilment_history")
 }
