@@ -1,8 +1,53 @@
 const prisma = require('../config/prisma');
+const TX_OPTIONS = require('../utils/transactionOptions');
 
 const orderInclude = {
   items: { orderBy: { position: 'asc' } },
   statusHistory: { orderBy: { changedAt: 'asc' } },
+  // Each seller's progress on their part of the order
+  fulfilments: {
+    orderBy: { createdAt: 'asc' },
+    select: {
+      sellerId: true,
+      status: true,
+      courier: true,
+      trackingNumber: true,
+      shippedAt: true,
+      deliveredAt: true,
+      seller: { select: { shopName: true } },
+    },
+  },
+};
+
+const FULFILMENT_RANK = { pending: 0, processing: 1, shipped: 2, delivered: 3 };
+
+// Brings every seller fulfilment of an order up to `to` (an admin override),
+// or marks them all cancelled. Records each change in the fulfilment history.
+const syncFulfilments = async (tx, { orderId, to, actorId, note }) => {
+  const fulfilments = await tx.sellerFulfilment.findMany({
+    where: { orderId, status: { not: 'cancelled' } },
+    select: { id: true, status: true },
+  });
+
+  const now = new Date();
+  for (const fulfilment of fulfilments) {
+    const behind =
+      to === 'cancelled' || FULFILMENT_RANK[fulfilment.status] < FULFILMENT_RANK[to];
+    if (!behind) continue;
+
+    await tx.sellerFulfilment.update({
+      where: { id: fulfilment.id },
+      data: {
+        status: to,
+        // Keep the seller's own ship date if they already shipped.
+        ...(to === 'shipped' || (to === 'delivered' && fulfilment.status !== 'shipped')
+          ? { shippedAt: now }
+          : {}),
+        ...(to === 'delivered' ? { deliveredAt: now } : {}),
+        history: { create: { status: to, note, changedById: actorId } },
+      },
+    });
+  }
 };
 
 // Admin views also include basic customer details
@@ -147,6 +192,9 @@ const createWithStockReservation = ({ orderData, lines, cartId }) =>
         a.productId.localeCompare(b.productId)
       );
 
+      const movements = [];
+      const sellerByProduct = new Map();
+
       for (const line of byProduct) {
         // "Reduce stock, but only if enough is left" in one step
         const result = await tx.product.updateMany({
@@ -164,6 +212,22 @@ const createWithStockReservation = ({ orderData, lines, cartId }) =>
           error.productName = line.name;
           throw error;
         }
+
+        // The row is locked by the update above, so this is the exact new value.
+        const after = await tx.product.findUnique({
+          where: { id: line.productId },
+          select: { stock: true, sellerId: true, seller: { select: { shopName: true } } },
+        });
+        sellerByProduct.set(line.productId, after);
+        movements.push({
+          productId: line.productId,
+          sellerId: after.sellerId,
+          type: 'order',
+          quantityChange: -line.quantity,
+          stockBefore: after.stock + line.quantity,
+          stockAfter: after.stock,
+          createdById: orderData.userId,
+        });
       }
 
       const order = await tx.order.create({
@@ -178,6 +242,13 @@ const createWithStockReservation = ({ orderData, lines, cartId }) =>
               unitPriceMinor: line.unitPriceMinor,
               quantity: line.quantity,
               lineTotalMinor: line.lineTotalMinor,
+              // Taken from the product row locked above, so every item from a
+              // seller's product is always visible to that seller.
+              sellerId: line.sellerId ?? sellerByProduct.get(line.productId)?.sellerId ?? null,
+              sellerShopNameAtPurchase:
+                line.sellerShopNameAtPurchase ??
+                sellerByProduct.get(line.productId)?.seller?.shopName ??
+                null,
               position: index,
             })),
           },
@@ -188,9 +259,27 @@ const createWithStockReservation = ({ orderData, lines, cartId }) =>
         include: orderInclude,
       });
 
+      await tx.inventoryMovement.createMany({
+        data: movements.map((movement) => ({ ...movement, orderId: order.id })),
+      });
+
+      // One fulfilment per seller in this order, so each can ship their part.
+      const sellerIds = [...new Set(order.items.map((item) => item.sellerId).filter(Boolean))];
+      for (const sellerId of sellerIds) {
+        await tx.sellerFulfilment.create({
+          data: {
+            orderId: order.id,
+            sellerId,
+            history: { create: { status: 'pending', note: 'Order placed' } },
+          },
+        });
+      }
+
       await tx.cartItem.deleteMany({ where: { cartId } });
 
-      return order;
+      return sellerIds.length
+        ? tx.order.findUnique({ where: { id: order.id }, include: orderInclude })
+        : order;
     },
     { maxWait: 5000, timeout: 15000 }
   );
@@ -213,8 +302,11 @@ const advanceStatus = ({ orderId, from, to, adminId, markPaid }) =>
       data: { orderId, status: to, changedById: adminId },
     });
 
+    // Admin override: sellers who are behind are moved up with the order.
+    await syncFulfilments(tx, { orderId, to, actorId: adminId, note: 'Updated by admin' });
+
     return tx.order.findUnique({ where: { id: orderId }, include: orderInclude });
-  });
+  }, TX_OPTIONS);
 
 // Cancels a pending or processing order and puts its stock back.
 // Returns null if the order can't be cancelled.
@@ -231,15 +323,31 @@ const cancel = ({ orderId, adminId }) =>
       data: { orderId, status: 'cancelled', changedById: adminId },
     });
 
+    await syncFulfilments(tx, { orderId, to: 'cancelled', actorId: adminId, note: 'Order cancelled by admin' });
+
     const order = await tx.order.findUnique({
       where: { id: orderId },
       include: { items: true },
     });
 
     for (const item of order.items) {
-      await tx.product.update({
+      const product = await tx.product.update({
         where: { id: item.productId },
         data: { stock: { increment: item.quantity } },
+        select: { stock: true, sellerId: true },
+      });
+
+      await tx.inventoryMovement.create({
+        data: {
+          productId: item.productId,
+          sellerId: product.sellerId,
+          type: 'order_cancelled',
+          quantityChange: item.quantity,
+          stockBefore: product.stock - item.quantity,
+          stockAfter: product.stock,
+          orderId,
+          createdById: adminId,
+        },
       });
     }
 
@@ -251,7 +359,7 @@ const cancel = ({ orderId, adminId }) =>
     }
 
     return tx.order.findUnique({ where: { id: orderId }, include: orderInclude });
-  });
+  }, TX_OPTIONS);
 
   // Only the fields the payment page needs
 const statusSelect = {

@@ -145,6 +145,9 @@ const createOrder = async ({ userId, idempotencyKey, checkoutData }) => {
       unitPriceMinor: product.priceMinor,
       quantity: item.quantity,
       lineTotalMinor: product.priceMinor * item.quantity,
+      // Who sold it. Seller orders and seller sales are looked up by this.
+      sellerId: product.sellerId ?? null,
+      sellerShopNameAtPurchase: product.seller?.shopName ?? null,
     };
   });
 

@@ -29,7 +29,7 @@ module.exports = {
   })),
   createProduct: respond(
     async (req) => ({
-      product: await sellerProductService.createMyProduct(req.seller.id, req.body),
+      product: await sellerProductService.createMyProduct(req.seller.id, req.body, req.userId),
     }),
     201
   ),
@@ -40,6 +40,17 @@ module.exports = {
       req.body
     ),
   })),
+  adjustStock: respond(async (req) => ({
+    product: await sellerProductService.adjustMyStock(
+      req.seller.id,
+      req.params.id,
+      req.body,
+      req.userId
+    ),
+  })),
+  getStockHistory: respond((req) =>
+    sellerProductService.getMyStockHistory(req.seller.id, req.params.id, req.query)
+  ),
   deactivateProduct: respond(async (req) => ({
     product: await sellerProductService.setMyProductActive(
       req.seller.id,

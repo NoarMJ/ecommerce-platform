@@ -21,6 +21,17 @@ const respond = (getPayload) => async (req, res, next) => {
 
 module.exports = {
   listOrders: respond((req) => sellerOrderService.listMyOrders(req.seller.id, req.query)),
+  getOverview: respond(async (req) => ({
+    overview: await sellerOrderService.getMyOverview(req.seller.id),
+  })),
+  updateFulfilment: respond(async (req) => ({
+    order: await sellerOrderService.updateMyFulfilment(
+      req.seller.id,
+      req.params.id,
+      req.body,
+      req.userId
+    ),
+  })),
   getOrder: respond(async (req) => ({
     order: await sellerOrderService.getMyOrder(req.seller.id, req.params.id),
   })),

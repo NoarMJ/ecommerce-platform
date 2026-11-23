@@ -27,6 +27,7 @@ const toOrderResponse = (order) => ({
     unitPriceMinor: item.unitPriceMinor,
     quantity: item.quantity,
     lineTotalMinor: item.lineTotalMinor,
+    shopName: item.sellerShopNameAtPurchase ?? undefined,
   })),
   shippingAddress: {
     fullName: order.shipFullName,
@@ -45,6 +46,15 @@ const toOrderResponse = (order) => ({
     status: entry.status,
     changedAt: entry.changedAt,
     changedBy: entry.changedById ?? undefined,
+  })),
+  // Each seller's progress on their items (multi-seller orders ship separately)
+  fulfilments: (order.fulfilments ?? []).map((fulfilment) => ({
+    shopName: fulfilment.seller?.shopName ?? undefined,
+    status: fulfilment.status,
+    courier: fulfilment.courier ?? undefined,
+    trackingNumber: fulfilment.trackingNumber ?? undefined,
+    shippedAt: fulfilment.shippedAt ?? undefined,
+    deliveredAt: fulfilment.deliveredAt ?? undefined,
   })),
   subtotalMinor: order.subtotalMinor,
   shippingFeeMinor: order.shippingFeeMinor,

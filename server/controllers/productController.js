@@ -118,7 +118,7 @@ const getProductBySlug = async (req, res, next) => {
 // POST /api/products (admin)
 const createProduct = async (req, res, next) => {
   try {
-    const product = await productService.createProduct(req.body);
+    const product = await productService.createProduct(req.body, req.userId);
 
     return res.status(201).json({
       status: 'success',
@@ -135,7 +135,8 @@ const updateProduct = async (req, res, next) => {
   try {
     const product = await productService.updateProduct(
       req.params.id,
-      req.body
+      req.body,
+      req.userId
     );
 
     return res.status(200).json({

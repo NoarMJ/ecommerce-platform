@@ -169,7 +169,7 @@ const getProductBySlug = async (slug) => {
 // Writes
 // ---------------------------------------------------------------------------
 
-const createProduct = async (body = {}) => {
+const createProduct = async (body = {}, actorId = null) => {
   const { name, slug, description, category, categories, priceMinor, images, stock, sku } = body;
 
   const categoryIds = collectCategoryIds(category, categories);
@@ -214,7 +214,7 @@ const createProduct = async (body = {}) => {
       stock: finalStock,
       sku: cleanSku,
       categoryIds,
-    });
+    }, actorId);
   } catch (error) {
     return translateDbError(error);
   }
@@ -232,7 +232,7 @@ const ALLOWED_UPDATE_FIELDS = [
   'sku',
 ];
 
-const updateProduct = async (id, body = {}) => {
+const updateProduct = async (id, body = {}, actorId = null) => {
   assertProductId(id);
 
   const updates = {};
@@ -311,7 +311,7 @@ const updateProduct = async (id, body = {}) => {
   }
 
   try {
-    return await productRepository.update(id, data);
+    return await productRepository.update(id, data, actorId);
   } catch (error) {
     return translateDbError(error);
   }
