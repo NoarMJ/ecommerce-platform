@@ -10,6 +10,7 @@ import { store } from './app/store.js'
 import AppThemeProvider from './AppThemeProvider.jsx'
 import './index.css'
 import App from './App.jsx'
+import ScrollToTop from './components/ScrollToTop.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -17,6 +18,7 @@ createRoot(document.getElementById('root')).render(
     {/* <ThemeProvider theme= {lightTheme}> */}
     <AppThemeProvider>
        <BrowserRouter>
+          <ScrollToTop />
           <App />
        </BrowserRouter>
      </AppThemeProvider>

@@ -27,6 +27,9 @@ import LocalShippingRoundedIcon from '@mui/icons-material/LocalShippingRounded';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
 
+import { useGetMeQuery } from '../../services/api';
+import { useGetMySellerApplicationQuery } from '../../services/sellerApi';
+
 const benefits = [
   {
     icon: <TrendingUpRoundedIcon />,
@@ -112,6 +115,21 @@ const faqs = [
 ];
 
 export default function SellerLandingPage() {
+  const { data: user } = useGetMeQuery();
+  const { data: seller } = useGetMySellerApplicationQuery(undefined, { skip: !user });
+  const isSeller = seller?.status === 'approved';
+
+  // Logged out -> register, then come back to the application form.
+  const heroCta = !user
+    ? {
+        label: 'Create account to be a seller',
+        to: '/register',
+        state: { from: { pathname: '/seller/apply' } },
+      }
+    : isSeller
+      ? { label: 'Go to dashboard', to: '/seller/dashboard' }
+      : { label: 'Become a seller', to: '/seller/apply' };
+
   return (
     <Box sx={{ overflow: 'hidden', bgcolor: '#FAFAFC' }}>
 
@@ -214,7 +232,8 @@ export default function SellerLandingPage() {
               >
                 <Button
                   component={RouterLink}
-                  to="/seller/application"
+                  to={heroCta.to}
+                  state={heroCta.state}
                   variant="contained"
                   size="large"
                   endIcon={<ArrowForwardRoundedIcon />}
@@ -231,7 +250,7 @@ export default function SellerLandingPage() {
                     },
                   }}
                 >
-                  Become a seller
+                  {heroCta.label}
                 </Button>
 
                 <Button
@@ -646,20 +665,27 @@ export default function SellerLandingPage() {
 
           <Box textAlign="center" sx={{ mt: 5 }}>
             <Button
-              component={RouterLink}
-              to="/seller/application"
-              variant="contained"
-              size="large"
-              endIcon={<ArrowForwardRoundedIcon />}
-              sx={{
-                px: 4,
-                py: 1.7,
-                borderRadius: 2,
-                fontWeight: 800,
-              }}
-            >
-              Start your application
-            </Button>
+                  component={RouterLink}
+                  to={heroCta.to}
+                  state={heroCta.state}
+                  variant="contained"
+                  size="large"
+                  endIcon={<ArrowForwardRoundedIcon />}
+                  sx={{
+                    bgcolor: '#B9F2D0',
+                    color: '#17132F',
+                    fontWeight: 800,
+                    px: 3,
+                    py: 1.7,
+                    borderRadius: 2,
+                    '&:hover': {
+                      bgcolor: '#9DE5BA',
+                      transform: 'translateY(-2px)',
+                    },
+                  }}
+                >
+                  {heroCta.label}
+                </Button>
           </Box>
         </Container>
       </Box>
@@ -863,34 +889,38 @@ export default function SellerLandingPage() {
               with our marketplace.
             </Typography>
 
-            <Button
-              component={RouterLink}
-              to="/seller/apply"
-              variant="contained"
-              size="large"
-              endIcon={<ArrowForwardRoundedIcon />}
-              sx={{
-                bgcolor: '#B9F2D0',
-                color: '#17132F',
-                fontWeight: 900,
-                px: 4,
-                py: 1.8,
-                borderRadius: 2,
-                '&:hover': {
-                  bgcolor: '#9DE5BA',
-                },
-              }}
-            >
-              Apply to become a seller
-            </Button>
-
+             <Button
+                  component={RouterLink}
+                  to={heroCta.to}
+                  state={heroCta.state}
+                  variant="contained"
+                  size="large"
+                  endIcon={<ArrowForwardRoundedIcon />}
+                  sx={{
+                    bgcolor: '#B9F2D0',
+                    color: '#17132F',
+                    fontWeight: 800,
+                    px: 3,
+                    py: 1.7,
+                    borderRadius: 2,
+                    '&:hover': {
+                      bgcolor: '#9DE5BA',
+                      transform: 'translateY(-2px)',
+                    },
+                  }}
+                >
+                  {heroCta.label}
+                </Button>
+                <Box textAlign="center">
             <Typography
               variant="caption"
               display="block"
-              sx={{ mt: 3, color: 'rgba(255,255,255,0.55)' }}
+              mx="auto"
+              sx={{ mt: 2, color: 'rgba(255,255,255,0.55)' }}
             >
               You must be at least 18 years old to apply.
             </Typography>
+            </Box>
           </Box>
         </Container>
       </Box>

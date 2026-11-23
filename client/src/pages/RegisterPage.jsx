@@ -1,6 +1,6 @@
 
 import { useState } from 'react'
-import { Link as RouterLink, useNavigate } from 'react-router-dom'
+import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   Alert,
   Box,
@@ -16,6 +16,7 @@ import { useLoginMutation, useRegisterMutation } from '../services/api'
 
 export default function RegisterPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [register, { isLoading }] = useRegisterMutation()
   const [login, { isLoading: isLoggingIn }] = useLoginMutation()
 
@@ -71,7 +72,7 @@ export default function RegisterPage() {
 
       await login({ email, password: form.password }).unwrap()
 
-      navigate('/checkout', { replace: true })
+      navigate(location.state?.from?.pathname || '/checkout', { replace: true })
     } catch (error) {
       setErrorMessage(error?.data?.message || error?.data?.error?.message ||
         'Account creation or automatic sign-in failed. Please try again or sign in.')
@@ -193,7 +194,7 @@ export default function RegisterPage() {
 
           <Typography textAlign="center" color="text.secondary">
             Already have an account?{' '}
-            <Link component={RouterLink} to="/login" underline="hover">
+            <Link component={RouterLink} to="/login" state={location.state} underline="hover">
               Sign in
             </Link>
           </Typography>
