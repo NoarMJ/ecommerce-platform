@@ -14,7 +14,6 @@ import {
 } from '@mui/material'
 
 import StorefrontOutlinedIcon from '@mui/icons-material/StorefrontOutlined'
-import LocationOnOutlinedIcon from '@mui/icons-material/LocationOnOutlined'
 import BusinessOutlinedIcon from '@mui/icons-material/BusinessOutlined'
 import BadgeOutlinedIcon from '@mui/icons-material/BadgeOutlined'
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined'

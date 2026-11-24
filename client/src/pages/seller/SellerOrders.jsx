@@ -48,7 +48,6 @@ const STATUSES = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
 const INK = 'text.primary'
 const MUTED = 'text.secondary'
 const BORDER = '#ac9619'
-const MINT = '#395852'
 
 function Panel({ children, sx = {}, ...props }) {
   return (
