@@ -1,5 +1,14 @@
 ﻿name: CI
 
+# Each job checks one layer, so a failing job tells you where the problem is:
+#   Client  -> front end (lint, tests, production build)
+#   Server  -> back-end code (lint, unit tests), no database
+#   Database-> migrations apply to an empty Postgres and match schema.prisma
+#   API     -> the real server boots against that database and answers HTTP
+#   Docker  -> the production image builds
+# Database and API use a throwaway Postgres container inside GitHub Actions.
+# They never touch Neon or any real data.
+
 on:
   push:
   pull_request:
@@ -36,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
 
     # Prisma needs these values to generate its client during install.
-    # This workflow does not connect to a database.
+    # This job does not connect to a database.
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ecommerce_ci
       DIRECT_URL: postgresql://postgres:postgres@localhost:5432/ecommerce_ci
@@ -68,9 +77,148 @@ jobs:
       - name: Run server health check
         run: npm --prefix server run test:e2e
 
+  database-checks:
+    name: Database checks
+    runs-on: ubuntu-latest
+
+    # A temporary Postgres that exists only while this job runs.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ecommerce_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ecommerce_ci
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/ecommerce_ci
+      SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ecommerce_shadow
+
+    defaults:
+      run:
+        working-directory: server
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install server dependencies
+        run: npm ci
+
+      - name: Validate the Prisma schema
+        run: npm run db:validate
+
+      - name: Apply every migration to an empty database
+        run: npm run db:migrate
+
+      - name: Check migrations match schema.prisma
+        # Fails if someone changed schema.prisma without creating a migration.
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE ecommerce_shadow;"
+          npx prisma migrate diff \
+            --from-migrations prisma/migrations \
+            --to-schema-datamodel prisma/schema.prisma \
+            --shadow-database-url "$SHADOW_DATABASE_URL" \
+            --exit-code
+
+  api-checks:
+    name: API checks
+    needs: [server-checks, database-checks]
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ecommerce_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    # Placeholder values for CI only. Real secrets live in the host's settings.
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ecommerce_ci
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/ecommerce_ci
+      PORT: 3002
+      CLIENT_URL: http://localhost:5173
+      JWT_ACCESS_SECRET: ci-only-access-secret
+      JWT_REFRESH_SECRET: ci-only-refresh-secret
+      MPESA_CALLBACK_SECRET: ci-only-callback-secret
+
+    defaults:
+      run:
+        working-directory: server
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install server dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Migrate the database
+        run: npm run db:migrate
+
+      - name: Start the API
+        run: |
+          npm start > server.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3002/api/health > /dev/null; then
+              echo "API is up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "API did not start within 30s"
+          cat server.log
+          exit 1
+
+      - name: Smoke test the endpoints
+        run: |
+          curl -fsS http://localhost:3002/api/health
+          echo
+          # These read from the database, so they prove API <-> Postgres works.
+          curl -fsS -o /dev/null -w "categories: %{http_code}\n" http://localhost:3002/api/categories
+          curl -fsS -o /dev/null -w "products:   %{http_code}\n" http://localhost:3002/api/products
+
+      - name: Show the server log if anything failed
+        if: failure()
+        run: cat server.log || true
+
   docker:
     name: Docker build
-    needs: [client-checks, server-checks]
+    needs: [client-checks, server-checks, database-checks, api-checks]
     runs-on: ubuntu-latest
     steps:
       - name: Check out the code
