@@ -1,11 +1,38 @@
-name: CI
+﻿name: CI
 
 on:
   push:
   pull_request:
 
 jobs:
-  checks:
+  client-checks:
+    name: Client checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install client dependencies
+        run: npm ci --prefix client
+
+      - name: Lint the client
+        run: npm --prefix client run lint
+
+      - name: Test the client
+        run: npm --prefix client test
+
+      - name: Build the client
+        run: npm --prefix client run build
+
+  server-checks:
+    name: Server checks
     runs-on: ubuntu-latest
 
     # Prisma needs these values to generate its client during install.
@@ -21,22 +48,12 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-
-      - name: Install client dependencies
-        run: npm ci --prefix client
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
 
       - name: Install server dependencies
         run: npm ci --prefix server
-
-      - name: Lint the client
-        run: npm --prefix client run lint
-
-      - name: Test the client
-        run: npm --prefix client test
-
-      - name: Build the client
-        run: npm --prefix client run build
 
       - name: Generate Prisma Client
         run: npx prisma generate
@@ -50,3 +67,14 @@ jobs:
 
       - name: Run server health check
         run: npm --prefix server run test:e2e
+
+  docker:
+    name: Docker build
+    needs: [client-checks, server-checks]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Build the server image
+        run: docker build -t ecommerce-server ./server
