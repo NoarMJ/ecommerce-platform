@@ -13,7 +13,9 @@ export default [
       globals: { ...globals.node, ...globals.jest },
     },
     rules: {
-      "no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
+      // ignoreRestSiblings allows `const { secret, ...safe } = obj`, the
+      // pattern used to strip fields (passwordHash, seller ids) from objects.
+      "no-unused-vars": ["warn", { argsIgnorePattern: "^_", ignoreRestSiblings: true }],
     },
   },
 ];
