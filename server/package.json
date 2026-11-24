@@ -4,10 +4,13 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "start": "node server.js",
+    "db:validate": "prisma validate",
+    "db:migrate": "prisma migrate deploy",
     "test": "node --test test/unit/*.test.js",
     "test:e2e": "node --test test/e2e/*.test.js",
     "test:all": "node --test test/**/*.test.js",
-    "lint": "node ../client/node_modules/eslint/bin/eslint.js --config ../client/eslint.config.js --rule no-undef:off --rule no-unused-vars:off ."
+    "lint": "eslint ."
   },
   "keywords": [],
   "author": "",
@@ -24,9 +27,12 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.11.3",
     "multer": "^2.5.0",
+    "prisma": "^6.19.3",
     "socket.io": "^4.8.4"
   },
   "devDependencies": {
-    "prisma": "^6.19.3"
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0"
   }
 }
