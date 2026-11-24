@@ -135,7 +135,7 @@ const getMe = async (req, res, next) => {
   }
 };
 
-const logout = (req, res, next) => {
+const logout = (req, res) => {
   clearAuthCookies(res);
     // Match the cookie name configured by your Express session middleware.
     res.clearCookie('ecommerce.sid', { path: '/' });

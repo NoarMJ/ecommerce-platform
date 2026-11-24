@@ -420,7 +420,7 @@ async function main() {
   let host = 'unknown';
   try {
     host = new URL(process.env.DIRECT_URL).host;
-  } catch (error) {
+  } catch {
     // keep "unknown"
   }
 
